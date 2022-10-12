@@ -116,19 +116,19 @@ impl Error {
 
 impl fmt::Display for Error {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        write!(fmt, "{}", self.description())
+        write!(fmt, "{}", error_description(self))
     }
 }
 
-impl StdError for Error {
-    fn description(&self) -> &str {
-        unsafe {
-            // This is safe since the error messages returned from mdb_strerror are static.
-            let err: *const c_char = ffi::mdb_strerror(self.to_err_code()) as *const c_char;
-            str::from_utf8_unchecked(CStr::from_ptr(err).to_bytes())
-        }
+fn error_description(err: &Error) -> &str {
+    unsafe {
+        // This is safe since the error messages returned from mdb_strerror are static.
+        let err: *const c_char = ffi::mdb_strerror(err.to_err_code()) as *const c_char;
+        str::from_utf8_unchecked(CStr::from_ptr(err).to_bytes())
     }
 }
+
+impl StdError for Error {}
 
 /// An LMDB result.
 pub type Result<T> = result::Result<T, Error>;
@@ -143,14 +143,11 @@ pub fn lmdb_result(err_code: c_int) -> Result<()> {
 
 #[cfg(test)]
 mod test {
-
-    use std::error::Error as StdError;
-
     use super::*;
 
     #[test]
     fn test_description() {
-        assert_eq!("Permission denied", Error::from_err_code(13).description());
-        assert_eq!("MDB_NOTFOUND: No matching key/data pair found", Error::NotFound.description());
+        assert_eq!("Permission denied", format!("{}", Error::from_err_code(13)));
+        assert_eq!("MDB_NOTFOUND: No matching key/data pair found", format!("{}", Error::NotFound));
     }
 }
