@@ -25,7 +25,7 @@ use flags::WriteFlags;
 use transaction::Transaction;
 
 /// An LMDB cursor.
-pub trait Cursor<'txn> {
+pub trait Cursor<'txn>: Sized {
     /// Returns a raw pointer to the underlying LMDB cursor.
     ///
     /// The caller **must** ensure that the pointer is not used after the
@@ -57,8 +57,8 @@ pub trait Cursor<'txn> {
     /// For databases with duplicate data items (`DatabaseFlags::DUP_SORT`), the
     /// duplicate data items of each key will be returned before moving on to
     /// the next key.
-    fn iter(&mut self) -> Iter<'txn> {
-        Iter::new(self.cursor(), ffi::MDB_NEXT, ffi::MDB_NEXT)
+    fn into_iter(self) -> Iter<'txn, Self> {
+        Iter::new(self, ffi::MDB_NEXT, ffi::MDB_NEXT)
     }
 
     /// Iterate over database items starting from the beginning of the database.
@@ -66,8 +66,8 @@ pub trait Cursor<'txn> {
     /// For databases with duplicate data items (`DatabaseFlags::DUP_SORT`), the
     /// duplicate data items of each key will be returned before moving on to
     /// the next key.
-    fn iter_start(&mut self) -> Iter<'txn> {
-        Iter::new(self.cursor(), ffi::MDB_FIRST, ffi::MDB_NEXT)
+    fn into_iter_start(self) -> Iter<'txn, Self> {
+        Iter::new(self, ffi::MDB_FIRST, ffi::MDB_NEXT)
     }
 
     /// Iterate over database items starting from the given key.
@@ -75,7 +75,7 @@ pub trait Cursor<'txn> {
     /// For databases with duplicate data items (`DatabaseFlags::DUP_SORT`), the
     /// duplicate data items of each key will be returned before moving on to
     /// the next key.
-    fn iter_from<K>(&mut self, key: K) -> Iter<'txn>
+    fn into_iter_from<K>(self, key: K) -> Iter<'txn, Self>
     where
         K: AsRef<[u8]>,
     {
@@ -83,37 +83,11 @@ pub trait Cursor<'txn> {
             Ok(_) | Err(Error::NotFound) => (),
             Err(error) => return Iter::Err(error),
         };
-        Iter::new(self.cursor(), ffi::MDB_GET_CURRENT, ffi::MDB_NEXT)
-    }
-
-    /// Iterate over duplicate database items. The iterator will begin with the
-    /// item next after the cursor, and continue until the end of the database.
-    /// Each item will be returned as an iterator of its duplicates.
-    fn iter_dup(&mut self) -> IterDup<'txn> {
-        IterDup::new(self.cursor(), ffi::MDB_NEXT)
-    }
-
-    /// Iterate over duplicate database items starting from the beginning of the
-    /// database. Each item will be returned as an iterator of its duplicates.
-    fn iter_dup_start(&mut self) -> IterDup<'txn> {
-        IterDup::new(self.cursor(), ffi::MDB_FIRST)
-    }
-
-    /// Iterate over duplicate items in the database starting from the given
-    /// key. Each item will be returned as an iterator of its duplicates.
-    fn iter_dup_from<K>(&mut self, key: K) -> IterDup<'txn>
-    where
-        K: AsRef<[u8]>,
-    {
-        match self.get(Some(key.as_ref()), None, ffi::MDB_SET_RANGE) {
-            Ok(_) | Err(Error::NotFound) => (),
-            Err(error) => return IterDup::Err(error),
-        };
-        IterDup::new(self.cursor(), ffi::MDB_GET_CURRENT)
+        Iter::new(self, ffi::MDB_GET_CURRENT, ffi::MDB_NEXT)
     }
 
     /// Iterate over the duplicates of the item in the database with the given key.
-    fn iter_dup_of<K>(&mut self, key: K) -> Iter<'txn>
+    fn into_iter_dup_of<K>(self, key: K) -> Iter<'txn, Self>
     where
         K: AsRef<[u8]>,
     {
@@ -121,11 +95,11 @@ pub trait Cursor<'txn> {
             Ok(_) => (),
             Err(Error::NotFound) => {
                 self.get(None, None, ffi::MDB_LAST).ok();
-                return Iter::new(self.cursor(), ffi::MDB_NEXT, ffi::MDB_NEXT);
+                return Iter::new(self, ffi::MDB_NEXT, ffi::MDB_NEXT);
             },
             Err(error) => return Iter::Err(error),
         };
-        Iter::new(self.cursor(), ffi::MDB_GET_CURRENT, ffi::MDB_NEXT_DUP)
+        Iter::new(self, ffi::MDB_GET_CURRENT, ffi::MDB_NEXT_DUP)
     }
 }
 
@@ -261,7 +235,7 @@ unsafe fn val_to_slice<'a>(val: ffi::MDB_val) -> &'a [u8] {
 }
 
 /// An iterator over the key/value pairs in an LMDB database.
-pub enum Iter<'txn> {
+pub enum Iter<'txn, C> {
     /// An iterator that returns an error on every call to Iter.next().
     /// Cursor.iter*() creates an Iter of this type when LMDB returns an error
     /// on retrieval of a cursor.  Using this variant instead of returning
@@ -275,7 +249,7 @@ pub enum Iter<'txn> {
     /// fails for some reason.
     Ok {
         /// The LMDB cursor with which to iterate.
-        cursor: *mut ffi::MDB_cursor,
+        cursor: C,
 
         /// The first operation to perform when the consumer calls Iter.next().
         op: c_uint,
@@ -286,11 +260,14 @@ pub enum Iter<'txn> {
         /// A marker to ensure the iterator doesn't outlive the transaction.
         _marker: PhantomData<fn(&'txn ())>,
     },
+
+    /// Used to hold an empty result of an iterator
+    Empty,
 }
 
-impl<'txn> Iter<'txn> {
+impl<'txn, C: Cursor<'txn>> Iter<'txn, C> {
     /// Creates a new iterator backed by the given cursor.
-    fn new<'t>(cursor: *mut ffi::MDB_cursor, op: c_uint, next_op: c_uint) -> Iter<'t> {
+    fn new<'t>(cursor: C, op: c_uint, next_op: c_uint) -> Iter<'t, C> {
         Iter::Ok {
             cursor,
             op,
@@ -298,21 +275,30 @@ impl<'txn> Iter<'txn> {
             _marker: PhantomData,
         }
     }
+
+    /// create a cursor starting from the current iterator state
+    pub fn into_cursor(self) -> Result<C> {
+        match self {
+            Iter::Err(err) => Err(err),
+            Iter::Ok { cursor, op: _, next_op: _, _marker } => Ok(cursor),
+            Iter::Empty => Err(Error::NotFound),
+        }
+    }
 }
 
-impl<'txn> fmt::Debug for Iter<'txn> {
+impl<'txn, C> fmt::Debug for Iter<'txn, C> {
     fn fmt(&self, f: &mut fmt::Formatter) -> result::Result<(), fmt::Error> {
         f.debug_struct("Iter").finish()
     }
 }
 
-impl<'txn> Iterator for Iter<'txn> {
+impl<'txn, C: Cursor<'txn>> Iterator for Iter<'txn, C> {
     type Item = Result<(&'txn [u8], &'txn [u8])>;
 
     fn next(&mut self) -> Option<Result<(&'txn [u8], &'txn [u8])>> {
         match self {
             &mut Iter::Ok {
-                cursor,
+                ref cursor,
                 ref mut op,
                 next_op,
                 _marker,
@@ -327,7 +313,7 @@ impl<'txn> Iterator for Iter<'txn> {
                 };
                 let op = mem::replace(op, next_op);
                 unsafe {
-                    match ffi::mdb_cursor_get(cursor, &mut key, &mut data, op) {
+                    match ffi::mdb_cursor_get(cursor.cursor(), &mut key, &mut data, op) {
                         ffi::MDB_SUCCESS => Some(Ok((val_to_slice(key), val_to_slice(data)))),
                         // EINVAL can occur when the cursor was previously seeked to a non-existent value,
                         // e.g. iter_from with a key greater than all values in the database.
@@ -337,83 +323,7 @@ impl<'txn> Iterator for Iter<'txn> {
                 }
             },
             &mut Iter::Err(err) => Some(Err(err)),
-        }
-    }
-}
-
-/// An iterator over the keys and duplicate values in an LMDB database.
-///
-/// The yielded items of the iterator are themselves iterators over the duplicate values for a
-/// specific key.
-pub enum IterDup<'txn> {
-    /// An iterator that returns an error on every call to Iter.next().
-    /// Cursor.iter*() creates an Iter of this type when LMDB returns an error
-    /// on retrieval of a cursor.  Using this variant instead of returning
-    /// an error makes Cursor.iter()* methods infallible, so consumers only
-    /// need to check the result of Iter.next().
-    Err(Error),
-
-    /// An iterator that returns an Item on calls to Iter.next().
-    /// The Item is a Result<(&'txn [u8], &'txn [u8])>, so this variant
-    /// might still return an error, if retrieval of the key/value pair
-    /// fails for some reason.
-    Ok {
-        /// The LMDB cursor with which to iterate.
-        cursor: *mut ffi::MDB_cursor,
-
-        /// The first operation to perform when the consumer calls Iter.next().
-        op: c_uint,
-
-        /// A marker to ensure the iterator doesn't outlive the transaction.
-        _marker: PhantomData<fn(&'txn ())>,
-    },
-}
-
-impl<'txn> IterDup<'txn> {
-    /// Creates a new iterator backed by the given cursor.
-    fn new<'t>(cursor: *mut ffi::MDB_cursor, op: c_uint) -> IterDup<'t> {
-        IterDup::Ok {
-            cursor,
-            op,
-            _marker: PhantomData,
-        }
-    }
-}
-
-impl<'txn> fmt::Debug for IterDup<'txn> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> result::Result<(), fmt::Error> {
-        f.debug_struct("IterDup").finish()
-    }
-}
-
-impl<'txn> Iterator for IterDup<'txn> {
-    type Item = Iter<'txn>;
-
-    fn next(&mut self) -> Option<Iter<'txn>> {
-        match self {
-            &mut IterDup::Ok {
-                cursor,
-                ref mut op,
-                _marker,
-            } => {
-                let mut key = ffi::MDB_val {
-                    mv_size: 0,
-                    mv_data: ptr::null_mut(),
-                };
-                let mut data = ffi::MDB_val {
-                    mv_size: 0,
-                    mv_data: ptr::null_mut(),
-                };
-                let op = mem::replace(op, ffi::MDB_NEXT_NODUP);
-                let err_code = unsafe { ffi::mdb_cursor_get(cursor, &mut key, &mut data, op) };
-
-                if err_code == ffi::MDB_SUCCESS {
-                    Some(Iter::new(cursor, ffi::MDB_GET_CURRENT, ffi::MDB_NEXT_DUP))
-                } else {
-                    None
-                }
-            },
-            &mut IterDup::Err(err) => Some(Iter::Err(err)),
+            &mut Iter::Empty => None,
         }
     }
 }
@@ -522,39 +432,67 @@ mod test {
         }
 
         let txn = env.begin_ro_txn().unwrap();
-        let mut cursor = txn.open_ro_cursor(db).unwrap();
 
         // Because Result implements FromIterator, we can collect the iterator
         // of items of type Result<_, E> into a Result<Vec<_, E>> by specifying
         // the collection type via the turbofish syntax.
-        assert_eq!(items, cursor.iter().collect::<Result<Vec<_>>>().unwrap());
+        {
+            let cursor = txn.open_ro_cursor(db).unwrap();
+            let iter = cursor.into_iter();
+            assert_eq!(items, iter.collect::<Result<Vec<_>>>().unwrap());
+        }
 
         // Alternately, we can collect it into an appropriately typed variable.
-        let retr: Result<Vec<_>> = cursor.iter_start().collect();
-        assert_eq!(items, retr.unwrap());
+        {
+            let cursor = txn.open_ro_cursor(db).unwrap();
+            let iter = cursor.into_iter_start();
+            let retr: Result<Vec<_>> = iter.collect();
+            assert_eq!(items, retr.unwrap());
+        }
 
-        cursor.get(Some(b"key2"), None, MDB_SET).unwrap();
-        assert_eq!(
-            items.clone().into_iter().skip(2).collect::<Vec<_>>(),
-            cursor.iter().collect::<Result<Vec<_>>>().unwrap()
-        );
+        {
+            let cursor = txn.open_ro_cursor(db).unwrap();
+            cursor.get(Some(b"key2"), None, MDB_SET).unwrap();
+            let iter = cursor.into_iter();
+            assert_eq!(
+                items.clone().into_iter().skip(2).collect::<Vec<_>>(),
+                iter.collect::<Result<Vec<_>>>().unwrap()
+            );
+        }
 
-        assert_eq!(items, cursor.iter_start().collect::<Result<Vec<_>>>().unwrap());
+        {
+            let cursor = txn.open_ro_cursor(db).unwrap();
+            let iter = cursor.into_iter_start();
+            assert_eq!(items, iter.collect::<Result<Vec<_>>>().unwrap());
+        }
 
-        assert_eq!(
-            items.clone().into_iter().skip(1).collect::<Vec<_>>(),
-            cursor.iter_from(b"key2").collect::<Result<Vec<_>>>().unwrap()
-        );
+        {
+            let cursor = txn.open_ro_cursor(db).unwrap();
+            let iter = cursor.into_iter_from(b"key2");
+            let cursor = iter.into_cursor().unwrap();
+            assert_eq!(
+                items.clone().into_iter().skip(1).collect::<Vec<_>>(),
+                cursor.into_iter_from(b"key2").collect::<Result<Vec<_>>>().unwrap()
+            );
+        }
 
-        assert_eq!(
-            items.clone().into_iter().skip(3).collect::<Vec<_>>(),
-            cursor.iter_from(b"key4").collect::<Result<Vec<_>>>().unwrap()
-        );
+        {
+            let cursor = txn.open_ro_cursor(db).unwrap();
+            let iter = cursor.into_iter_from(b"key4");
+            assert_eq!(
+                items.clone().into_iter().skip(3).collect::<Vec<_>>(),
+                iter.collect::<Result<Vec<_>>>().unwrap()
+            );
+        }
 
-        assert_eq!(
-            vec!().into_iter().collect::<Vec<(&[u8], &[u8])>>(),
-            cursor.iter_from(b"key6").collect::<Result<Vec<_>>>().unwrap()
-        );
+        {
+            let cursor = txn.open_ro_cursor(db).unwrap();
+            let iter = cursor.into_iter_from(b"key6");
+            assert_eq!(
+                vec!().into_iter().collect::<Vec<(&[u8], &[u8])>>(),
+                iter.collect::<Result<Vec<_>>>().unwrap()
+            );
+        }
     }
 
     #[test]
@@ -563,11 +501,10 @@ mod test {
         let env = Environment::new().open(dir.path()).unwrap();
         let db = env.open_db(None).unwrap();
         let txn = env.begin_ro_txn().unwrap();
-        let mut cursor = txn.open_ro_cursor(db).unwrap();
 
-        assert_eq!(0, cursor.iter().count());
-        assert_eq!(0, cursor.iter_start().count());
-        assert_eq!(0, cursor.iter_from(b"foo").count());
+        assert_eq!(0, txn.open_ro_cursor(db).unwrap().into_iter().count());
+        assert_eq!(0, txn.open_ro_cursor(db).unwrap().into_iter_start().count());
+        assert_eq!(0, txn.open_ro_cursor(db).unwrap().into_iter_from(b"foo").count());
     }
 
     #[test]
@@ -576,15 +513,11 @@ mod test {
         let env = Environment::new().open(dir.path()).unwrap();
         let db = env.create_db(None, DatabaseFlags::DUP_SORT).unwrap();
         let txn = env.begin_ro_txn().unwrap();
-        let mut cursor = txn.open_ro_cursor(db).unwrap();
 
-        assert_eq!(0, cursor.iter().count());
-        assert_eq!(0, cursor.iter_start().count());
-        assert_eq!(0, cursor.iter_from(b"foo").count());
-        assert_eq!(0, cursor.iter_dup().count());
-        assert_eq!(0, cursor.iter_dup_start().count());
-        assert_eq!(0, cursor.iter_dup_from(b"foo").count());
-        assert_eq!(0, cursor.iter_dup_of(b"foo").count());
+        assert_eq!(0, txn.open_ro_cursor(db).unwrap().into_iter().count());
+        assert_eq!(0, txn.open_ro_cursor(db).unwrap().into_iter_start().count());
+        assert_eq!(0, txn.open_ro_cursor(db).unwrap().into_iter_from(b"foo").count());
+        assert_eq!(0, txn.open_ro_cursor(db).unwrap().into_iter_dup_of(b"foo").count());
     }
 
     #[test]
@@ -617,43 +550,15 @@ mod test {
         }
 
         let txn = env.begin_ro_txn().unwrap();
-        let mut cursor = txn.open_ro_cursor(db).unwrap();
-        assert_eq!(items, cursor.iter_dup().flatten().collect::<Result<Vec<_>>>().unwrap());
 
-        cursor.get(Some(b"b"), None, MDB_SET).unwrap();
-        assert_eq!(
-            items.clone().into_iter().skip(4).collect::<Vec<(&[u8], &[u8])>>(),
-            cursor.iter_dup().flatten().collect::<Result<Vec<_>>>().unwrap()
-        );
-
-        assert_eq!(items, cursor.iter_dup_start().flatten().collect::<Result<Vec<(&[u8], &[u8])>>>().unwrap());
-
-        assert_eq!(
-            items.clone().into_iter().skip(3).collect::<Vec<(&[u8], &[u8])>>(),
-            cursor.iter_dup_from(b"b").flatten().collect::<Result<Vec<_>>>().unwrap()
-        );
-
-        assert_eq!(
-            items.clone().into_iter().skip(3).collect::<Vec<(&[u8], &[u8])>>(),
-            cursor.iter_dup_from(b"ab").flatten().collect::<Result<Vec<_>>>().unwrap()
-        );
-
-        assert_eq!(
-            items.clone().into_iter().skip(9).collect::<Vec<(&[u8], &[u8])>>(),
-            cursor.iter_dup_from(b"d").flatten().collect::<Result<Vec<_>>>().unwrap()
-        );
-
-        assert_eq!(
-            vec!().into_iter().collect::<Vec<(&[u8], &[u8])>>(),
-            cursor.iter_dup_from(b"f").flatten().collect::<Result<Vec<_>>>().unwrap()
-        );
-
+        let cursor = txn.open_ro_cursor(db).unwrap();
         assert_eq!(
             items.clone().into_iter().skip(3).take(3).collect::<Vec<(&[u8], &[u8])>>(),
-            cursor.iter_dup_of(b"b").collect::<Result<Vec<_>>>().unwrap()
+            cursor.into_iter_dup_of(b"b").into_iter().collect::<Result<Vec<_>>>().unwrap()
         );
 
-        assert_eq!(0, cursor.iter_dup_of(b"foo").count());
+        let cursor = txn.open_ro_cursor(db).unwrap();
+        assert_eq!(0, cursor.into_iter_dup_of(b"foo").count());
     }
 
     #[test]
@@ -666,8 +571,8 @@ mod test {
         let r: Vec<(&[u8], &[u8])> = Vec::new();
         {
             let txn = env.begin_ro_txn().unwrap();
-            let mut cursor = txn.open_ro_cursor(db).unwrap();
-            assert_eq!(r, cursor.iter_dup_of(b"a").collect::<Result<Vec<_>>>().unwrap());
+            let cursor = txn.open_ro_cursor(db).unwrap();
+            assert_eq!(r, cursor.into_iter_dup_of(b"a").collect::<Result<Vec<_>>>().unwrap());
         }
 
         {
@@ -679,19 +584,18 @@ mod test {
         }
 
         let mut txn = env.begin_rw_txn().unwrap();
-        let mut cursor = txn.open_rw_cursor(db).unwrap();
-        assert_eq!(items, cursor.iter_dup().flat_map(|x| x).collect::<Result<Vec<_>>>().unwrap());
 
+        let cursor = txn.open_rw_cursor(db).unwrap();
         assert_eq!(
             items.clone().into_iter().take(1).collect::<Vec<(&[u8], &[u8])>>(),
-            cursor.iter_dup_of(b"a").collect::<Result<Vec<_>>>().unwrap()
+            cursor.into_iter_dup_of(b"a").collect::<Result<Vec<_>>>().unwrap()
         );
 
+        let mut cursor = txn.open_rw_cursor(db).unwrap();
         assert_eq!((None, &b"1"[..]), cursor.get(Some(b"a"), Some(b"1"), MDB_SET).unwrap());
-
         cursor.del(WriteFlags::empty()).unwrap();
 
-        assert_eq!(r, cursor.iter_dup_of(b"a").collect::<Result<Vec<_>>>().unwrap());
+        assert_eq!(r, cursor.into_iter_dup_of(b"a").collect::<Result<Vec<_>>>().unwrap());
     }
 
     #[test]
