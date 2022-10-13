@@ -32,9 +32,9 @@ jobs:
     - name: Build debug
       run: cargo build
     - name: Run tests release
-      run: cargo test --release
+      run: cargo test --all --release
     - name: Run tests debug
-      run: cargo test
+      run: cargo test --all
 
   build_ubuntu:
     runs-on: ubuntu-latest
@@ -56,9 +56,9 @@ jobs:
     - name: Build debug
       run: cargo build
     - name: Run tests release
-      run: cargo test --release
+      run: cargo test --all --release
     - name: Run tests debug
-      run: cargo test
+      run: cargo test --all
 
   build_macos:
     runs-on: macos-latest
@@ -80,6 +80,6 @@ jobs:
     - name: Build debug
       run: cargo build
     - name: Run tests release
-      run: cargo test --release
+      run: cargo test --all --release
     - name: Run tests debug
-      run: cargo test
+      run: cargo test --all
