@@ -16,7 +16,6 @@ extern crate bitflags;
 pub use cursor::{
     Cursor,
     Iter,
-    IterDup,
     RoCursor,
     RwCursor,
 };

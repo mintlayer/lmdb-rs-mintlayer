@@ -480,8 +480,8 @@ mod test {
 
         let txn = env.begin_rw_txn().unwrap();
         {
-            let mut cur = txn.open_ro_cursor(db).unwrap();
-            let iter = cur.iter_dup_of(b"key1");
+            let cur = txn.open_ro_cursor(db).unwrap();
+            let iter = cur.into_iter_dup_of(b"key1");
             let vals = iter.map(|x| x.unwrap()).map(|(_, x)| x).collect::<Vec<_>>();
             assert_eq!(vals, vec![b"val1", b"val2", b"val3"]);
         }
@@ -494,12 +494,13 @@ mod test {
 
         let txn = env.begin_rw_txn().unwrap();
         {
-            let mut cur = txn.open_ro_cursor(db).unwrap();
-            let iter = cur.iter_dup_of(b"key1");
+            let cur = txn.open_ro_cursor(db).unwrap();
+            let iter = cur.into_iter_dup_of(b"key1");
             let vals = iter.map(|x| x.unwrap()).map(|(_, x)| x).collect::<Vec<_>>();
             assert_eq!(vals, vec![b"val1", b"val3"]);
 
-            let iter = cur.iter_dup_of(b"key2");
+            let cur = txn.open_ro_cursor(db).unwrap();
+            let iter = cur.into_iter_dup_of(b"key2");
             assert_eq!(0, iter.count());
         }
         txn.commit().unwrap();

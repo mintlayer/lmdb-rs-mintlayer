@@ -229,9 +229,9 @@ impl Environment {
         let mut freelist: size_t = 0;
         let db = Database::freelist_db();
         let txn = self.begin_ro_txn()?;
-        let mut cursor = txn.open_ro_cursor(db)?;
+        let cursor = txn.open_ro_cursor(db)?;
 
-        for result in cursor.iter() {
+        for result in cursor.into_iter() {
             let (_key, value) = result?;
             if value.len() < mem::size_of::<size_t>() {
                 return Err(Error::Corrupted);
