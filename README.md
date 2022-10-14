@@ -1,6 +1,3 @@
-[![Build Status](https://travis-ci.org/mozilla/lmdb-rs.svg?branch=master)](https://travis-ci.org/mozilla/lmdb-rs)
-[![Windows Build status](https://ci.appveyor.com/api/projects/status/id69kkymorycld55/branch/master?svg=true)](https://ci.appveyor.com/project/mykmelez/lmdb-rs-rrsb3/branch/master)
-
 # lmdb-rs
 
 Idiomatic and safe APIs for interacting with the
