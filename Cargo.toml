@@ -1,13 +1,11 @@
 [package]
-name = "lmdb-rkv"
+name = "lmdb-mintlayer"
 # NB: When modifying, also modify html_root_url in lib.rs
-version = "0.14.0"
-authors = ["Dan Burkert <dan@danburkert.com>", "Victor Porof <vporof@mozilla.com>"]
+version = "0.15.0"
 license = "Apache-2.0"
 description = "Idiomatic and safe LMDB wrapper."
-documentation = "https://docs.rs/lmdb-rkv"
-homepage = "https://github.com/mozilla/lmdb-rs"
-repository = "https://github.com/mozilla/lmdb-rs.git"
+homepage = "https://github.com/mozilla/lmdb-rs-mintlayer"
+repository = "https://github.com/mozilla/lmdb-rs-mintlayer.git"
 readme = "README.md"
 keywords = ["LMDB", "database", "storage-engine", "bindings", "library"]
 categories = ["database"]
@@ -22,10 +20,6 @@ exclude = [
 
 [lib]
 name = "lmdb"
-
-[badges]
-travis-ci = { repository = "mozilla/lmdb-rs" }
-appveyor = { repository = "mozilla/lmdb-rs" }
 
 [workspace]
 members = [
