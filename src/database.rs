@@ -51,6 +51,3 @@ impl Database {
         self.dbi
     }
 }
-
-unsafe impl Sync for Database {}
-unsafe impl Send for Database {}
