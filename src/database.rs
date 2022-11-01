@@ -52,5 +52,12 @@ impl Database {
     }
 }
 
-unsafe impl Sync for Database {}
-unsafe impl Send for Database {}
+mod test {
+    use super::*;
+    // Just to check this compiles
+    #[allow(unused)]
+    fn database_is_send_sync(db: Database) {
+        fn is_send_sync(_x: impl Send + Sync) {}
+        is_send_sync(db)
+    }
+}
