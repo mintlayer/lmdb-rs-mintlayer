@@ -33,6 +33,7 @@ bindgen = { version = "0.53.2", default-features = false, optional = true, featu
 [features]
 default = []
 with-asan = []
+with-tsan = []
 with-fuzzer = []
 with-fuzzer-no-link = []
 

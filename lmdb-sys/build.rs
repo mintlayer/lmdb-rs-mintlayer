@@ -75,6 +75,11 @@ fn main() {
             builder.flag("-fsanitize=address");
         }
 
+        if env::var("CARGO_FEATURE_WITH_TSAN").is_ok() {
+            builder.flag("-fsanitize=thread");
+            println!("cargo:rustc-link-lib=tsan");
+        }
+
         if env::var("CARGO_FEATURE_WITH_FUZZER").is_ok() {
             builder.flag("-fsanitize=fuzzer");
         } else if env::var("CARGO_FEATURE_WITH_FUZZER_NO_LINK").is_ok() {
