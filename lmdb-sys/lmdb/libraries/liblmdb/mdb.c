@@ -128,6 +128,21 @@ extern int cacheflush(char *addr, int nbytes, int cache);
 #define	BROKEN_FDATASYNC
 #endif
 
+/* ThreadSanitizer flagged up potential issues with access to some shared
+ * variables. Making them atomic seems to resolve the issue. The change was
+ * prompted by an investigation into a segmentation fault.
+ */
+#ifdef _WIN32
+/* MSVC does not currently support atomics. However on Windows, plain loads and
+ * stores are guaranteed atomic if sufficiently aligned.
+ * https://learn.microsoft.com/en-gb/windows/win32/sync/interlocked-variable-access
+ */
+#define MDB_ATOMIC
+#else
+// Use proper atomics otherwise
+#define MDB_ATOMIC _Atomic
+#endif
+
 #include <errno.h>
 #include <limits.h>
 #include <stddef.h>
@@ -799,11 +814,11 @@ typedef struct MDB_rxbody {
 	 *	started from so we can avoid overwriting any data used in that
 	 *	particular version.
 	 */
-	volatile txnid_t		mrb_txnid;
+	volatile MDB_ATOMIC txnid_t	mrb_txnid;
 	/** The process ID of the process owning this reader txn. */
-	volatile MDB_PID_T	mrb_pid;
+	volatile MDB_ATOMIC MDB_PID_T	mrb_pid;
 	/** The thread ID of the thread owning this txn. */
-	volatile MDB_THR_T	mrb_tid;
+	volatile MDB_ATOMIC MDB_THR_T	mrb_tid;
 } MDB_rxbody;
 
 	/** The actual reader record, with cacheline padding. */
@@ -843,12 +858,12 @@ typedef struct MDB_txbody {
 		 *	This is recorded here only for convenience; the value can always
 		 *	be determined by reading the main database meta pages.
 		 */
-	volatile txnid_t		mtb_txnid;
+	volatile MDB_ATOMIC txnid_t	mtb_txnid;
 		/** The number of slots that have been used in the reader table.
 		 *	This always records the maximum count, it is not decremented
 		 *	when readers release their slots.
 		 */
-	volatile unsigned	mtb_numreaders;
+	volatile MDB_ATOMIC unsigned	mtb_numreaders;
 #if defined(_WIN32) || defined(MDB_USE_POSIX_SEM)
 		/** Binary form of names of the reader/writer locks */
 	mdb_hash_t			mtb_mutexid;
@@ -1512,7 +1527,7 @@ struct MDB_env {
 #if !(MDB_MAXKEYSIZE)
 	unsigned int	me_maxkey;	/**< max size of a key */
 #endif
-	int		me_live_reader;		/**< have liveness lock in reader table */
+	MDB_ATOMIC int	me_live_reader;		/**< have liveness lock in reader table */
 #ifdef _WIN32
 	int		me_pidquery;		/**< Used in OpenProcess */
 #endif
