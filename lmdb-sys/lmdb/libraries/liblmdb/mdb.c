@@ -1482,6 +1482,8 @@ struct MDB_env {
 #endif
 	/** Failed to update the meta page. Probably an I/O error. */
 #define	MDB_FATAL_ERROR	0x80000000U
+	/** using a raw block device */
+#define	MDB_RAWPART		0x40000000U
 	/** Some fields are initialized. */
 #define	MDB_ENV_ACTIVE	0x20000000U
 	/** me_txkey is set */
@@ -1757,6 +1759,8 @@ mdb_strerror(int err)
 		NULL, err, 0, ptr, MSGSIZE, (va_list *)buf+MSGSIZE);
 	return ptr;
 #else
+	if (err < 0)
+		return "Invalid error code";
 	return strerror(err);
 #endif
 }
@@ -4051,6 +4055,8 @@ fail:
 	return rc;
 }
 
+static int ESECT mdb_env_map(MDB_env *env, void *addr);
+
 /** Read the environment parameters of a DB environment before
  * mapping it into memory.
  * @param[in] env the environment handle
@@ -4066,6 +4072,31 @@ mdb_env_read_header(MDB_env *env, int prev, MDB_meta *meta)
 	MDB_meta	*m;
 	int			i, rc, off;
 	enum { Size = sizeof(pbuf) };
+
+	if (env->me_flags & MDB_RAWPART) {
+#define VM_ALIGN	0x200000
+		env->me_mapsize += VM_ALIGN-1;
+		env->me_mapsize &= ~(VM_ALIGN-1);
+		env->me_psize = env->me_os_psize;
+		rc = mdb_env_map(env, NULL);
+		if (rc) {
+			DPRINTF(("mdb_env_map: %s", mdb_strerror(rc)));
+			return rc;
+		}
+		p = (MDB_page *)env->me_map;
+		for (i=0; i<NUM_METAS; i++) {
+			if (!F_ISSET(p->mp_flags, P_META))
+				return ENOENT;
+			if (env->me_metas[i]->mm_magic != MDB_MAGIC)
+				return MDB_INVALID;
+			if (env->me_metas[i]->mm_version != MDB_DATA_VERSION)
+				return MDB_VERSION_MISMATCH;
+			if (i == 0 || env->me_metas[i]->mm_txnid > meta->mm_txnid)
+				*meta = *env->me_metas[i];
+			p = (MDB_page *)((char *)p + env->me_psize);
+		}
+		return 0;
+	}
 
 	/* We don't know the page size yet, so use a minimum value.
 	 * Read both meta pages so we can use the latest one.
@@ -4094,6 +4125,8 @@ mdb_env_read_header(MDB_env *env, int prev, MDB_meta *meta)
 		p = (MDB_page *)&pbuf;
 
 		if (!F_ISSET(p->mp_flags, P_META)) {
+			if (env->me_flags & MDB_RAWPART)
+				return ENOENT;
 			DPRINTF(("page %"Yu" not a meta page", p->mp_pgno));
 			return MDB_INVALID;
 		}
@@ -4160,6 +4193,18 @@ mdb_env_init_meta(MDB_env *env, MDB_meta *meta)
 	DPUTS("writing new meta page");
 
 	psize = env->me_psize;
+
+	if ((env->me_flags & (MDB_RAWPART|MDB_WRITEMAP)) == (MDB_RAWPART|MDB_WRITEMAP)) {
+		p = (MDB_page *)env->me_map;
+		p->mp_pgno = 0;
+		p->mp_flags = P_META;
+		*(MDB_meta *)METADATA(p) = *meta;
+		q = (MDB_page *)((char *)p + psize);
+		q->mp_pgno = 1;
+		q->mp_flags = P_META;
+		*(MDB_meta *)METADATA(q) = *meta;
+		return 0;
+	}
 
 	p = calloc(NUM_METAS, psize);
 	if (!p)
@@ -4423,7 +4468,7 @@ mdb_env_map(MDB_env *env, void *addr)
 	int prot = PROT_READ;
 	if (flags & MDB_WRITEMAP) {
 		prot |= PROT_WRITE;
-		if (ftruncate(env->me_fd, env->me_mapsize) < 0)
+		if (!(flags & MDB_RAWPART) && ftruncate(env->me_fd, env->me_mapsize) < 0)
 			return ErrCode();
 	}
 	env->me_map = mmap(addr, env->me_mapsize, prot, MAP_SHARED,
@@ -4756,7 +4801,7 @@ mdb_env_open2(MDB_env *env, int prev)
 		env->me_pidquery = PROCESS_QUERY_INFORMATION;
 	/* Grab functions we need from NTDLL */
 	if (!NtCreateSection) {
-		HMODULE h = GetModuleHandleW(L"NTDLL.DLL");
+		HMODULE h = GetModuleHandle("NTDLL.DLL");
 		if (!h)
 			return MDB_PROBLEM;
 		NtClose = (NtCloseFunc *)GetProcAddress(h, "NtClose");
@@ -4895,9 +4940,6 @@ mdb_env_open2(MDB_env *env, int prev)
 #endif
 	env->me_maxpg = env->me_mapsize / env->me_psize;
 
-	if (env->me_txns)
-		env->me_txns->mti_txnid = meta.mm_txnid;
-
 #if MDB_DEBUG
 	{
 		MDB_meta *meta = mdb_env_pick_meta(env);
@@ -4997,6 +5039,9 @@ static int ESECT
 mdb_env_share_locks(MDB_env *env, int *excl)
 {
 	int rc = 0;
+	MDB_meta *meta = mdb_env_pick_meta(env);
+
+	env->me_txns->mti_txnid = meta->mm_txnid;
 
 #ifdef _WIN32
 	{
@@ -5461,6 +5506,17 @@ mdb_env_open(MDB_env *env, const char *path, unsigned int flags, mdb_mode_t mode
 	if (rc)
 		goto leave;
 #endif
+#endif
+#ifndef _WIN32
+	{
+		struct stat st;
+		flags &= ~MDB_RAWPART;
+		if (!stat(path, &st) && (S_ISBLK(st.st_mode) || S_ISCHR(st.st_mode))) {
+			flags |= MDB_RAWPART | MDB_NOSUBDIR;
+			if (!env->me_mapsize)
+				env->me_mapsize = DEFAULT_MAPSIZE;
+		}
+	}
 #endif
 	flags |= MDB_ENV_ACTIVE;	/* tell mdb_env_close0() to clean up */
 
@@ -7681,7 +7737,7 @@ more:
 						offset *= 4; /* space for 4 more */
 						break;
 					}
-					/* FALLTHRU: Big enough MDB_DUPFIXED sub-page */
+					/* FALLTHRU *//* Big enough MDB_DUPFIXED sub-page */
 				case MDB_CURRENT:
 					fp->mp_flags |= P_DIRTY;
 					COPY_PGNO(fp->mp_pgno, mp->mp_pgno);
@@ -7880,7 +7936,7 @@ put_sub:
 			xdata.mv_size = 0;
 			xdata.mv_data = "";
 			leaf = NODEPTR(mc->mc_pg[mc->mc_top], mc->mc_ki[mc->mc_top]);
-			if (flags == MDB_CURRENT) {
+			if ((flags & (MDB_CURRENT|MDB_APPENDDUP)) == MDB_CURRENT) {
 				xflags = MDB_CURRENT|MDB_NOSPILL;
 			} else {
 				mdb_xcursor_init1(mc, leaf);
