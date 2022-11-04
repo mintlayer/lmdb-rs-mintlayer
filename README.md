@@ -14,6 +14,10 @@ cd lmdb-rs
 cargo build
 ```
 
+## lmdb source
+
+The lmdb source code is copied from: https://github.com/monero-project/monero
+
 ## Features
 
 * [x] lmdb-sys.
