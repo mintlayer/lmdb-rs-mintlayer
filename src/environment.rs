@@ -372,7 +372,14 @@ impl fmt::Debug for Environment {
 
 impl Drop for Environment {
     fn drop(&mut self) {
-        unsafe { ffi::mdb_env_close(self.env) }
+        // This is a solution for the issue where, very rarely, closing an environment
+        // from a thread where a transaction was executed causes a SIGSEGV.
+        // This issue was proven and tested in mintlayer-core under rare circumstances
+        std::thread::scope(|s| {
+            s.spawn(||
+                unsafe { ffi::mdb_env_close(self.env) }
+            ).join().expect("Failed to join lmdb Drop for Environment thread");
+        });
     }
 }
 
