@@ -4,6 +4,10 @@ Cargo.lock
 
 # The cache for docker container dependency
 .cargo
+.cargo-ok
 
 # VSCode
 .vscode/
+
+# lmdb tests output
+lmdb-sys/tests/fixtures/copytestdb.mdb
