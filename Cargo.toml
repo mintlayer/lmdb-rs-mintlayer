@@ -1,6 +1,6 @@
 [package]
 name = "lmdb-mintlayer"
-version = "0.15.2"
+version = "0.15.3"
 license = "Apache-2.0"
 description = "Idiomatic and safe LMDB wrapper."
 homepage = "https://github.com/mozilla/lmdb-rs-mintlayer"
