@@ -76,7 +76,7 @@ impl Environment {
     ///
     /// The caller **must** ensure that the pointer is not dereferenced after the lifetime of the
     /// environment.
-    pub fn env(&self) -> *mut ffi::MDB_env {
+    pub unsafe fn env(&self) -> *mut ffi::MDB_env {
         self.env
     }
 
