@@ -160,7 +160,7 @@ impl<'env> RoTransaction<'env> {
     pub(crate) fn new(env: &'env Environment) -> Result<RoTransaction<'env>> {
         let mut txn: *mut ffi::MDB_txn = ptr::null_mut();
         unsafe {
-            lmdb_result(ffi::mdb_txn_begin(env.env(), ptr::null_mut(), ffi::MDB_RDONLY, &mut txn))?;
+            lmdb_result(ffi::mdb_txn_begin(env.env_unsafe(), ptr::null_mut(), ffi::MDB_RDONLY, &mut txn))?;
             Ok(RoTransaction {
                 txn,
                 _marker: PhantomData,
@@ -260,7 +260,7 @@ impl<'env> RwTransaction<'env> {
     pub(crate) fn new(env: &'env Environment) -> Result<RwTransaction<'env>> {
         let mut txn: *mut ffi::MDB_txn = ptr::null_mut();
         unsafe {
-            lmdb_result(ffi::mdb_txn_begin(env.env(), ptr::null_mut(), EnvironmentFlags::empty().bits(), &mut txn))?;
+            lmdb_result(ffi::mdb_txn_begin(env.env_unsafe(), ptr::null_mut(), EnvironmentFlags::empty().bits(), &mut txn))?;
             Ok(RwTransaction {
                 txn,
                 _marker: PhantomData,

@@ -76,7 +76,7 @@ impl Environment {
     ///
     /// The caller **must** ensure that the pointer is not dereferenced after the lifetime of the
     /// environment.
-    pub unsafe fn env(&self) -> *mut ffi::MDB_env {
+    pub unsafe fn env_unsafe(&self) -> *mut ffi::MDB_env {
         self.env
     }
 
@@ -157,7 +157,7 @@ impl Environment {
     pub fn sync(&self, force: bool) -> Result<()> {
         unsafe {
             lmdb_result(ffi::mdb_env_sync(
-                self.env(),
+                self.env_unsafe(),
                 if force {
                     1
                 } else {
@@ -188,7 +188,7 @@ impl Environment {
     pub fn stat(&self) -> Result<Stat> {
         unsafe {
             let mut stat = Stat::new();
-            lmdb_try!(ffi::mdb_env_stat(self.env(), stat.mdb_stat()));
+            lmdb_try!(ffi::mdb_env_stat(self.env_unsafe(), stat.mdb_stat()));
             Ok(stat)
         }
     }
@@ -197,7 +197,7 @@ impl Environment {
     pub fn info(&self) -> Result<Info> {
         unsafe {
             let mut info = Info(mem::zeroed());
-            lmdb_try!(ffi::mdb_env_info(self.env(), &mut info.0));
+            lmdb_try!(ffi::mdb_env_info(self.env_unsafe(), &mut info.0));
             Ok(info)
         }
     }
@@ -265,7 +265,7 @@ impl Environment {
     ///   with size 0 to update the environment. Otherwise, new transaction creation
     ///   will fail with `Error::MapResized`.
     pub fn set_map_size(&self, size: size_t) -> Result<()> {
-        unsafe { lmdb_result(ffi::mdb_env_set_mapsize(self.env(), size)) }
+        unsafe { lmdb_result(ffi::mdb_env_set_mapsize(self.env_unsafe(), size)) }
     }
 }
 

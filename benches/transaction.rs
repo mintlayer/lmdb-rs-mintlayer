@@ -108,7 +108,7 @@ fn bench_put_rand_raw(b: &mut Bencher) {
     XorShiftRng::new_unseeded().shuffle(&mut items[..]);
 
     let dbi = db.dbi();
-    let env = _env.env();
+    let env = _env.env_unsafe();
 
     let mut key_val: MDB_val = MDB_val {
         mv_size: 0,
