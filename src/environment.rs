@@ -8,7 +8,7 @@ use std::ffi::OsStr;
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Mutex, RwLockReadGuard, RwLockWriteGuard, RwLock};
 use std::{
     fmt,
     mem,
@@ -57,6 +57,7 @@ impl OsStrExtLmdb for OsStr {
 /// An environment supports multiple databases, all residing in the same shared-memory map.
 pub struct Environment {
     env: *mut ffi::MDB_env,
+    locked_env: RwLock<*mut ffi::MDB_env>,
     dbi_open_mutex: Mutex<()>,
 }
 
@@ -78,6 +79,16 @@ impl Environment {
     /// environment.
     pub unsafe fn env_unsafe(&self) -> *mut ffi::MDB_env {
         self.env
+    }
+
+    /// Returns a raw pointer to the underlying LMDB environment, under a read-only lock
+    pub fn env_ro(&self) -> RwLockReadGuard<*mut ffi::MDB_env> {
+        self.locked_env.read().expect("Failed to lock mutex")
+    }
+
+    /// Returns a raw pointer to the underlying LMDB environment, under a read/write lock
+    pub fn env_rw(&self) -> RwLockWriteGuard<*mut ffi::MDB_env> {
+        self.locked_env.write().expect("Failed to lock mutex")
     }
 
     /// Opens a handle to an LMDB database.
@@ -157,7 +168,7 @@ impl Environment {
     pub fn sync(&self, force: bool) -> Result<()> {
         unsafe {
             lmdb_result(ffi::mdb_env_sync(
-                self.env_unsafe(),
+                *self.env_rw(),
                 if force {
                     1
                 } else {
@@ -184,24 +195,64 @@ impl Environment {
         ffi::mdb_dbi_close(self.env, db.dbi());
     }
 
+    unsafe fn stat_internal(env: *mut ffi::MDB_env) -> Result<Stat> {
+        unsafe {
+            let mut stat = Stat::new();
+            lmdb_try!(ffi::mdb_env_stat(env, stat.mdb_stat()));
+            Ok(stat)
+        }
+    }
+
+    /// Retrieves statistics about this environment.
+    /// Unsafe as it doesn't lock the environment
+    pub unsafe fn stat_unsafe(&self) -> Result<Stat> {
+        unsafe {
+            let stat = Self::stat_internal(self.env_unsafe())?;
+            Ok(stat)
+        }
+    }
+
     /// Retrieves statistics about this environment.
     pub fn stat(&self) -> Result<Stat> {
         unsafe {
-            let mut stat = Stat::new();
-            lmdb_try!(ffi::mdb_env_stat(self.env_unsafe(), stat.mdb_stat()));
+            let stat = Self::stat_internal(*self.env_ro())?;
             Ok(stat)
+        }
+    }
+
+    unsafe fn info_internal(env: *mut ffi::MDB_env) -> Result<Info> {
+        unsafe {
+            let mut info = Info(mem::zeroed());
+            lmdb_try!(ffi::mdb_env_info(env, &mut info.0));
+            Ok(info)
+        }
+    }
+
+    /// Retrieves info about this environment.
+    /// Unsafe as it doesn't lock the environment
+    pub unsafe fn info_unsafe(&self) -> Result<Info> {
+        unsafe {
+            Self::info_internal(self.env_unsafe())
         }
     }
 
     /// Retrieves info about this environment.
     pub fn info(&self) -> Result<Info> {
         unsafe {
-            let mut info = Info(mem::zeroed());
-            lmdb_try!(ffi::mdb_env_info(self.env_unsafe(), &mut info.0));
-            Ok(info)
+            Self::info_internal(*self.env_ro())
         }
     }
 
+    /// Returns both Stat and Info safely
+    pub fn stat_and_info(&self) -> Result<(Stat, Info)> {
+        let env = self.env_ro();
+        unsafe {
+            let stat = Self::stat_internal(*env)?;
+            let info = Self::info_internal(*env)?;
+            Ok((stat, info))
+        }
+    }
+    
     /// Retrieves the total number of pages on the freelist.
     ///
     /// Along with `Environment::info()`, this can be used to calculate the exact number
@@ -248,6 +299,33 @@ impl Environment {
         Ok(freelist)
     }
 
+    unsafe fn set_map_size_internal(env: *mut ffi::MDB_env, size: size_t) -> Result<()> {
+        unsafe { lmdb_result(ffi::mdb_env_set_mapsize(env, size)) }
+    }
+
+    /// Sets the size of the memory map to use for the environment.
+    ///
+    /// This could be used to resize the map when the environment is already open.
+    ///
+    /// Note:
+    ///
+    /// * No active transactions allowed when performing resizing in this process.
+    ///
+    /// * The size should be a multiple of the OS page size. Any attempt to set
+    ///   a size smaller than the space already consumed by the environment will
+    ///   be silently changed to the current size of the used space.
+    ///
+    /// * In the multi-process case, once a process resizes the map, other
+    ///   processes need to either re-open the environment, or call set_map_size
+    ///   with size 0 to update the environment. Otherwise, new transaction creation
+    ///   will fail with `Error::MapResized`.
+    /// 
+    /// Note: Unsafe because env isn't protected in this call
+    pub unsafe fn set_map_size_unsafe(&self, size: size_t) -> Result<()> {
+        unsafe { Self::set_map_size_internal(self.env_unsafe(), size) }
+    }
+
+
     /// Sets the size of the memory map to use for the environment.
     ///
     /// This could be used to resize the map when the environment is already open.
@@ -265,7 +343,8 @@ impl Environment {
     ///   with size 0 to update the environment. Otherwise, new transaction creation
     ///   will fail with `Error::MapResized`.
     pub fn set_map_size(&self, size: size_t) -> Result<()> {
-        unsafe { lmdb_result(ffi::mdb_env_set_mapsize(self.env_unsafe(), size)) }
+        let env = self.locked_env.read().expect("Mutex failure");
+        unsafe { Self::set_map_size_internal(*env, size) }
     }
 }
 
@@ -437,6 +516,7 @@ impl EnvironmentBuilder {
         }
         Ok(Environment {
             env,
+            locked_env: RwLock::new(env),
             dbi_open_mutex: Mutex::new(()),
         })
     }
