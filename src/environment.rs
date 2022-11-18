@@ -154,7 +154,7 @@ impl Environment {
     /// Data is always written to disk when `Transaction::commit` is called, but the operating
     /// system may keep it buffered. LMDB always flushes the OS buffers upon commit as well, unless
     /// the environment was opened with `MDB_NOSYNC` or in part `MDB_NOMETASYNC`.
-    pub fn sync(&self, force: bool) -> Result<()> {
+    pub fn sync(&mut self, force: bool) -> Result<()> {
         unsafe {
             lmdb_result(ffi::mdb_env_sync(
                 self.env(),
@@ -264,7 +264,7 @@ impl Environment {
     ///   processes need to either re-open the environment, or call set_map_size
     ///   with size 0 to update the environment. Otherwise, new transaction creation
     ///   will fail with `Error::MapResized`.
-    pub fn set_map_size(&self, size: size_t) -> Result<()> {
+    pub fn set_map_size(&mut self, size: size_t) -> Result<()> {
         unsafe { lmdb_result(ffi::mdb_env_set_mapsize(self.env(), size)) }
     }
 }
@@ -573,11 +573,11 @@ mod test {
     fn test_sync() {
         let dir = TempDir::new("test").unwrap();
         {
-            let env = Environment::new().open(dir.path()).unwrap();
+            let mut env = Environment::new().open(dir.path()).unwrap();
             assert!(env.sync(true).is_ok());
         }
         {
-            let env = Environment::new().set_flags(EnvironmentFlags::READ_ONLY).open(dir.path()).unwrap();
+            let mut env = Environment::new().set_flags(EnvironmentFlags::READ_ONLY).open(dir.path()).unwrap();
             assert!(env.sync(true).is_err());
         }
     }
@@ -661,7 +661,7 @@ mod test {
     #[test]
     fn test_set_map_size() {
         let dir = TempDir::new("test").unwrap();
-        let env = Environment::new().open(dir.path()).unwrap();
+        let mut env = Environment::new().open(dir.path()).unwrap();
 
         let mut info = env.info().unwrap();
         let default_size = info.map_size();
