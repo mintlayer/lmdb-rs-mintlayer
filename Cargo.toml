@@ -41,8 +41,9 @@ libc = "0.2"
 lmdb-rkv-sys = { path = "./lmdb-sys" }
 
 [dev-dependencies]
-rand = "0.4"
+rand = "0.8"
 tempdir = "0.3"
+page_size = "0.5"
 
 [features]
 default = []
