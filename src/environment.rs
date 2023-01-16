@@ -609,7 +609,7 @@ mod test {
 
         // Stats should now reflect inserted values.
         let stat = env.stat().unwrap();
-        assert!(stat.page_size() == 4096 || stat.page_size() == 16384); // Covers both M1 computers and others
+        assert_eq!(stat.page_size(), page_size::get() as u32);
         assert_eq!(stat.depth(), 1);
         assert_eq!(stat.branch_pages(), 0);
         assert_eq!(stat.leaf_pages(), 1);
