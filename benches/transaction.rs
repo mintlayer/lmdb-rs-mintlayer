@@ -15,7 +15,6 @@ use lmdb::{
     WriteFlags,
 };
 use rand::{
-    Rng,
     XorShiftRng,
 };
 use std::ptr;

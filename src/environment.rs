@@ -729,7 +729,7 @@ mod test {
     #[test]
     fn test_set_map_size() {
         let dir = TempDir::new("test").unwrap();
-        let mut env = Environment::new().open(dir.path()).unwrap();
+        let env = Environment::new().open(dir.path()).unwrap();
 
         let mut info = env.info().unwrap();
         let default_size = info.map_size();
