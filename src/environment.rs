@@ -8,7 +8,7 @@ use std::ffi::OsStr;
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::RwLock;
 use std::{
     fmt,
     mem,
@@ -57,7 +57,7 @@ impl OsStrExtLmdb for OsStr {
 /// An environment supports multiple databases, all residing in the same shared-memory map.
 pub struct Environment {
     env: *mut ffi::MDB_env,
-    dbi_open_mutex: Mutex<()>,
+    env_mutex: RwLock<()>,
 }
 
 impl Environment {
@@ -76,7 +76,7 @@ impl Environment {
     ///
     /// The caller **must** ensure that the pointer is not dereferenced after the lifetime of the
     /// environment.
-    pub fn env(&self) -> *mut ffi::MDB_env {
+    pub unsafe fn env_unsafe(&self) -> *mut ffi::MDB_env {
         self.env
     }
 
@@ -95,11 +95,10 @@ impl Environment {
     ///
     /// The database name may not contain the null character.
     pub fn open_db<'env>(&'env self, name: Option<&str>) -> Result<Database> {
-        let mutex = self.dbi_open_mutex.lock();
-        let txn = self.begin_ro_txn()?;
+        let _lock = self.env_mutex.write().expect("Mutex lock failed");
+        let txn = unsafe { self.begin_ro_txn_unsafe()? };
         let db = unsafe { txn.open_db(name)? };
         txn.commit()?;
-        drop(mutex);
         Ok(db)
     }
 
@@ -118,11 +117,10 @@ impl Environment {
     /// This function will fail with `Error::BadRslot` if called by a thread with an open
     /// transaction.
     pub fn create_db<'env>(&'env self, name: Option<&str>, flags: DatabaseFlags) -> Result<Database> {
-        let mutex = self.dbi_open_mutex.lock();
-        let txn = self.begin_rw_txn()?;
+        let _lock = self.env_mutex.write().expect("Mutex in create_db lock failed");
+        let txn = unsafe { self.begin_rw_txn_unsafe()? };
         let db = unsafe { txn.create_db(name, flags)? };
         txn.commit()?;
-        drop(mutex);
         Ok(db)
     }
 
@@ -138,14 +136,29 @@ impl Environment {
         Ok(DatabaseFlags::from_bits(flags).unwrap())
     }
 
+    /// Create a read-only transaction for use with the environment
+    /// without a lock, hence unsafe
+    pub unsafe fn begin_ro_txn_unsafe<'env>(&'env self) -> Result<RoTransaction<'env>> {
+        RoTransaction::new(self)
+    }
+
+    /// Create a read-write transaction for use with the environment. This method will block while
+    /// there are any other read-write transactions open on the environment.
+    /// without a lock, hence unsafe
+    pub unsafe fn begin_rw_txn_unsafe<'env>(&'env self) -> Result<RwTransaction<'env>> {
+        RwTransaction::new(self)
+    }
+
     /// Create a read-only transaction for use with the environment.
     pub fn begin_ro_txn<'env>(&'env self) -> Result<RoTransaction<'env>> {
+        let _lock = self.env_mutex.read().expect("Failed to get mutex");
         RoTransaction::new(self)
     }
 
     /// Create a read-write transaction for use with the environment. This method will block while
     /// there are any other read-write transactions open on the environment.
     pub fn begin_rw_txn<'env>(&'env self) -> Result<RwTransaction<'env>> {
+        let _lock = self.env_mutex.read().expect("Failed to get mutex");
         RwTransaction::new(self)
     }
 
@@ -154,10 +167,10 @@ impl Environment {
     /// Data is always written to disk when `Transaction::commit` is called, but the operating
     /// system may keep it buffered. LMDB always flushes the OS buffers upon commit as well, unless
     /// the environment was opened with `MDB_NOSYNC` or in part `MDB_NOMETASYNC`.
-    pub fn sync(&mut self, force: bool) -> Result<()> {
+    pub fn sync(&mut self, force: bool) -> Result<()> { // TODO(Sam): make unsafe
         unsafe {
             lmdb_result(ffi::mdb_env_sync(
-                self.env(),
+                self.env_unsafe(),
                 if force {
                     1
                 } else {
@@ -184,21 +197,62 @@ impl Environment {
         ffi::mdb_dbi_close(self.env, db.dbi());
     }
 
+    unsafe fn stat_internal(env: *mut ffi::MDB_env) -> Result<Stat> {
+        unsafe {
+            let mut stat = Stat::new();
+            lmdb_try!(ffi::mdb_env_stat(env, stat.mdb_stat()));
+            Ok(stat)
+        }
+    }
+
+    /// Retrieves statistics about this environment.
+    /// Unsafe as it doesn't lock the environment
+    pub unsafe fn stat_unsafe(&self) -> Result<Stat> {
+        unsafe {
+            let stat = Self::stat_internal(self.env_unsafe())?;
+            Ok(stat)
+        }
+    }
+
     /// Retrieves statistics about this environment.
     pub fn stat(&self) -> Result<Stat> {
         unsafe {
-            let mut stat = Stat::new();
-            lmdb_try!(ffi::mdb_env_stat(self.env(), stat.mdb_stat()));
+            let stat = Self::stat_internal(self.env_unsafe())?;
             Ok(stat)
+        }
+    }
+
+    unsafe fn info_internal(env: *mut ffi::MDB_env) -> Result<Info> {
+        unsafe {
+            let mut info = Info(mem::zeroed());
+            lmdb_try!(ffi::mdb_env_info(env, &mut info.0));
+            Ok(info)
+        }
+    }
+
+    /// Retrieves info about this environment.
+    /// Unsafe as it doesn't lock the environment
+    pub unsafe fn info_unsafe(&self) -> Result<Info> {
+        unsafe {
+            Self::info_internal(self.env_unsafe())
         }
     }
 
     /// Retrieves info about this environment.
     pub fn info(&self) -> Result<Info> {
         unsafe {
-            let mut info = Info(mem::zeroed());
-            lmdb_try!(ffi::mdb_env_info(self.env(), &mut info.0));
-            Ok(info)
+            Self::info_internal(self.env_unsafe())
+        }
+    }
+
+    /// Returns both Stat and Info safely
+    pub fn stat_and_info(&self) -> Result<(Stat, Info)> {
+        let _lock = self.env_mutex.read().expect("Mutex lock failed");
+        unsafe {
+            let env = self.env_unsafe();
+            let stat = Self::stat_internal(env)?;
+            let info = Self::info_internal(env)?;
+            Ok((stat, info))
         }
     }
 
@@ -248,6 +302,18 @@ impl Environment {
         Ok(freelist)
     }
 
+    unsafe fn set_map_size_internal(env: *mut ffi::MDB_env, size: size_t) -> Result<()> {
+        unsafe { lmdb_result(ffi::mdb_env_set_mapsize(env, size)) }
+    }
+
+
+    /// See set_map_size()
+    /// Note: Unsafe because env isn't protected in this call
+    pub unsafe fn set_map_size_unsafe(&self, size: size_t) -> Result<()> {
+        unsafe { Self::set_map_size_internal(self.env_unsafe(), size) }
+    }
+
+
     /// Sets the size of the memory map to use for the environment.
     ///
     /// This could be used to resize the map when the environment is already open.
@@ -264,8 +330,10 @@ impl Environment {
     ///   processes need to either re-open the environment, or call set_map_size
     ///   with size 0 to update the environment. Otherwise, new transaction creation
     ///   will fail with `Error::MapResized`.
-    pub fn set_map_size(&mut self, size: size_t) -> Result<()> {
-        unsafe { lmdb_result(ffi::mdb_env_set_mapsize(self.env(), size)) }
+    pub fn set_map_size(&self, size: size_t) -> Result<()> {
+        unsafe {
+            Self::set_map_size_internal(self.env_unsafe(), size)
+        }
     }
 }
 
@@ -437,7 +505,7 @@ impl EnvironmentBuilder {
         }
         Ok(Environment {
             env,
-            dbi_open_mutex: Mutex::new(()),
+            env_mutex: RwLock::new(()),
         })
     }
 
