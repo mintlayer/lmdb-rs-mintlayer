@@ -29,6 +29,7 @@ members = [
 bitflags = "1"
 byteorder = "1"
 libc = "0.2"
+page_size = "0.5.0"
 
 # In order to ensure that we test lmdb-rkv in CI against the in-tree version
 # of lmdb-rkv-sys, we specify the dependency as a path here.
