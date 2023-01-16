@@ -589,7 +589,7 @@ mod test {
 
         // Stats should be empty initially.
         let stat = env.stat().unwrap();
-        assert!(stat.page_size() == page_size::get() as u32);
+        assert_eq!(stat.page_size(), page_size::get() as u32);
         assert_eq!(stat.depth(), 0);
         assert_eq!(stat.branch_pages(), 0);
         assert_eq!(stat.leaf_pages(), 0);
