@@ -154,7 +154,7 @@ impl Environment {
             if current_iteration_increase >= remaining_required_space {
                 break;
             } else {
-                remaining_required_space -= headroom.unwrap_or(DEFAULT_RESIZE_VALUE);
+                remaining_required_space -= current_iteration_increase;
             }
         }
         Ok(())
