@@ -343,7 +343,7 @@ mod test {
         let env = Environment::new().open(dir.path()).unwrap();
         let db = env.open_db(None).unwrap();
 
-        let mut txn = env.begin_rw_txn().unwrap();
+        let mut txn = env.begin_rw_txn(None).unwrap();
         txn.put(db, b"key1", b"val1", WriteFlags::empty()).unwrap();
         txn.put(db, b"key2", b"val2", WriteFlags::empty()).unwrap();
         txn.put(db, b"key3", b"val3", WriteFlags::empty()).unwrap();
@@ -365,7 +365,7 @@ mod test {
         let env = Environment::new().open(dir.path()).unwrap();
         let db = env.create_db(None, DatabaseFlags::DUP_SORT).unwrap();
 
-        let mut txn = env.begin_rw_txn().unwrap();
+        let mut txn = env.begin_rw_txn(None).unwrap();
         txn.put(db, b"key1", b"val1", WriteFlags::empty()).unwrap();
         txn.put(db, b"key1", b"val2", WriteFlags::empty()).unwrap();
         txn.put(db, b"key1", b"val3", WriteFlags::empty()).unwrap();
@@ -400,7 +400,7 @@ mod test {
         let env = Environment::new().open(dir.path()).unwrap();
         let db = env.create_db(None, DatabaseFlags::DUP_SORT | DatabaseFlags::DUP_FIXED).unwrap();
 
-        let mut txn = env.begin_rw_txn().unwrap();
+        let mut txn = env.begin_rw_txn(None).unwrap();
         txn.put(db, b"key1", b"val1", WriteFlags::empty()).unwrap();
         txn.put(db, b"key1", b"val2", WriteFlags::empty()).unwrap();
         txn.put(db, b"key1", b"val3", WriteFlags::empty()).unwrap();
@@ -424,7 +424,7 @@ mod test {
             vec![(b"key1", b"val1"), (b"key2", b"val2"), (b"key3", b"val3"), (b"key5", b"val5")];
 
         {
-            let mut txn = env.begin_rw_txn().unwrap();
+            let mut txn = env.begin_rw_txn(None).unwrap();
             for &(ref key, ref data) in &items {
                 txn.put(db, key, data, WriteFlags::empty()).unwrap();
             }
@@ -542,7 +542,7 @@ mod test {
         ];
 
         {
-            let mut txn = env.begin_rw_txn().unwrap();
+            let mut txn = env.begin_rw_txn(None).unwrap();
             for &(ref key, ref data) in &items {
                 txn.put(db, key, data, WriteFlags::empty()).unwrap();
             }
@@ -576,14 +576,14 @@ mod test {
         }
 
         {
-            let mut txn = env.begin_rw_txn().unwrap();
+            let mut txn = env.begin_rw_txn(None).unwrap();
             for &(ref key, ref data) in &items {
                 txn.put(db, key, data, WriteFlags::empty()).unwrap();
             }
             txn.commit().unwrap();
         }
 
-        let mut txn = env.begin_rw_txn().unwrap();
+        let mut txn = env.begin_rw_txn(None).unwrap();
 
         let cursor = txn.open_rw_cursor(db).unwrap();
         assert_eq!(
@@ -604,7 +604,7 @@ mod test {
         let env = Environment::new().open(dir.path()).unwrap();
         let db = env.open_db(None).unwrap();
 
-        let mut txn = env.begin_rw_txn().unwrap();
+        let mut txn = env.begin_rw_txn(None).unwrap();
         let mut cursor = txn.open_rw_cursor(db).unwrap();
 
         cursor.put(b"key1", b"val1", WriteFlags::empty()).unwrap();

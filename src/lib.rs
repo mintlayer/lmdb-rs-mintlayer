@@ -58,12 +58,16 @@ macro_rules! lmdb_try_with_cleanup {
     }};
 }
 
+#[cfg(not(target_pointer_width = "64"))]
+compile_error!("Mintlayer with lmdb backend can only be compiled on 64-bit systems. Either seek an alternative storage backend or use a 64-bit system.");
+
 mod cursor;
 mod database;
 mod environment;
 mod error;
 mod flags;
 mod transaction;
+mod transaction_guard;
 
 #[cfg(test)]
 mod test_utils {
@@ -96,7 +100,7 @@ mod test_utils {
         for height in 0..1000 {
             let mut value = [0u8; 8];
             LittleEndian::write_u64(&mut value, height);
-            let mut tx = env.begin_rw_txn().expect("begin_rw_txn");
+            let mut tx = env.begin_rw_txn(None).expect("begin_rw_txn");
             tx.put(index, &HEIGHT_KEY, &value, WriteFlags::empty()).expect("tx.put");
             tx.commit().expect("tx.commit")
         }

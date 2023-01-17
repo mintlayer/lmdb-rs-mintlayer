@@ -40,6 +40,8 @@ use transaction::{
     Transaction,
 };
 
+use crate::transaction_guard::{ScopedTransactionBlocker, TransactionGuard};
+
 #[cfg(windows)]
 /// Adding a 'missing' trait from windows OsStrExt
 trait OsStrExtLmdb {
@@ -119,7 +121,7 @@ impl Environment {
     /// transaction.
     pub fn create_db<'env>(&'env self, name: Option<&str>, flags: DatabaseFlags) -> Result<Database> {
         let mutex = self.dbi_open_mutex.lock();
-        let txn = self.begin_rw_txn()?;
+        let txn = self.begin_rw_txn(None)?;
         let db = unsafe { txn.create_db(name, flags)? };
         txn.commit()?;
         drop(mutex);
@@ -145,7 +147,10 @@ impl Environment {
 
     /// Create a read-write transaction for use with the environment. This method will block while
     /// there are any other read-write transactions open on the environment.
-    pub fn begin_rw_txn<'env>(&'env self) -> Result<RwTransaction<'env>> {
+    pub fn begin_rw_txn<'env>(&'env self, headroom: Option<usize>) -> Result<RwTransaction<'env>> {
+        while self.needs_resize(headroom)? {
+            self.do_resize(headroom.unwrap_or(1 << 28))?;
+        }
         RwTransaction::new(self)
     }
 
@@ -264,8 +269,61 @@ impl Environment {
     ///   processes need to either re-open the environment, or call set_map_size
     ///   with size 0 to update the environment. Otherwise, new transaction creation
     ///   will fail with `Error::MapResized`.
-    pub fn set_map_size(&mut self, size: size_t) -> Result<()> {
+    pub fn set_map_size(&self, size: size_t) -> Result<()> {
         unsafe { lmdb_result(ffi::mdb_env_set_mapsize(self.env(), size)) }
+    }
+
+    /// Check whether a resize is needed under two conditions:
+    /// 1. The headroom + currently used size don't fit in map_size()
+    /// 2. More than RESIZE_PERCENTage is used of the database
+    fn needs_resize(&self, headroom: Option<usize>) -> Result<bool> {
+        // TODO(Sam): test resize checking
+
+        const RESIZE_PERCENT: f32 = 0.9;
+
+        let stat = self.stat()?;
+        let env_info = self.info()?;
+
+        let size_used = stat.page_size() as usize - env_info.last_pgno();
+
+        let current_map_size = env_info.map_size();
+
+        let current_percentage_used = size_used as f32/current_map_size as f32;
+
+        if let Some(given_headroom) = headroom {
+            if env_info.map_size() < given_headroom.checked_add(size_used).expect("LMDB size check addition failed") {
+                return Ok(true);
+            }
+        }
+
+        Ok(current_percentage_used > RESIZE_PERCENT)
+    }
+
+    /// Do the resizing. This will pause all transactions (or will dead-lock), then resize
+    /// Keep in mind that a single resize step cannot be larger than 1 << 31, due to usize limitations
+    /// this is due to the FFI using usize while lmdb uses mdb_size_t, which is always u64
+    fn do_resize(&self, increase_size: usize) -> Result<()> {
+        // TODO(Sam): test resizing
+
+        const MIN_MAP_SIZE_INCREASE: usize = 1 << 28;
+        const MAX_MAP_SIZE_INCREASE: usize = 1 << 31;
+        let increase_size = increase_size.clamp(MIN_MAP_SIZE_INCREASE, MAX_MAP_SIZE_INCREASE);
+
+        let stat = self.stat()?;
+        let env_info = self.info()?;
+
+        // TODO(Sam): check available disk space
+
+        // calculate new map size, and ensure it's an integer of OS page size
+        let new_map_size = env_info.map_size().checked_add(increase_size).expect("LMDB resize size addition failed");
+        let new_map_size = new_map_size + stat.page_size() as usize;
+
+        let _tx_blocker = ScopedTransactionBlocker::new();
+        TransactionGuard::wait_for_transactions_to_finish();
+
+        self.set_map_size(new_map_size)?;
+
+        Ok(())
     }
 }
 
@@ -526,7 +584,7 @@ mod test {
             // writable environment
             let env = Environment::new().open(dir.path()).unwrap();
 
-            assert!(env.begin_rw_txn().is_ok());
+            assert!(env.begin_rw_txn(None).is_ok());
             assert!(env.begin_ro_txn().is_ok());
         }
 
@@ -534,7 +592,7 @@ mod test {
             // read-only environment
             let env = Environment::new().set_flags(EnvironmentFlags::READ_ONLY).open(dir.path()).unwrap();
 
-            assert!(env.begin_rw_txn().is_err());
+            assert!(env.begin_rw_txn(None).is_err());
             assert!(env.begin_ro_txn().is_ok());
         }
     }
@@ -602,7 +660,7 @@ mod test {
         for i in 0..64 {
             let mut value = [0u8; 8];
             LittleEndian::write_u64(&mut value, i);
-            let mut tx = env.begin_rw_txn().expect("begin_rw_txn");
+            let mut tx = env.begin_rw_txn(None).expect("begin_rw_txn");
             tx.put(db, &value, &value, WriteFlags::default()).expect("tx.put");
             tx.commit().expect("tx.commit")
         }
@@ -645,11 +703,11 @@ mod test {
         for i in 0..64 {
             let mut value = [0u8; 8];
             LittleEndian::write_u64(&mut value, i);
-            let mut tx = env.begin_rw_txn().expect("begin_rw_txn");
+            let mut tx = env.begin_rw_txn(None).expect("begin_rw_txn");
             tx.put(db, &value, &value, WriteFlags::default()).expect("tx.put");
             tx.commit().expect("tx.commit")
         }
-        let mut tx = env.begin_rw_txn().expect("begin_rw_txn");
+        let mut tx = env.begin_rw_txn(None).expect("begin_rw_txn");
         tx.clear_db(db).expect("clear");
         tx.commit().expect("tx.commit");
 
@@ -661,7 +719,7 @@ mod test {
     #[test]
     fn test_set_map_size() {
         let dir = TempDir::new("test").unwrap();
-        let mut env = Environment::new().open(dir.path()).unwrap();
+        let env = Environment::new().open(dir.path()).unwrap();
 
         let mut info = env.info().unwrap();
         let default_size = info.map_size();
