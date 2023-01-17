@@ -148,8 +148,9 @@ impl Environment {
     /// Create a read-write transaction for use with the environment. This method will block while
     /// there are any other read-write transactions open on the environment.
     pub fn begin_rw_txn<'env>(&'env self, headroom: Option<usize>) -> Result<RwTransaction<'env>> {
+        const DEFAULT_RESIZE_VALUE: usize = 1 << 28;
         while self.needs_resize(headroom)? {
-            self.do_resize(headroom.unwrap_or(1 << 28))?;
+            self.do_resize(headroom.unwrap_or(DEFAULT_RESIZE_VALUE))?;
         }
         RwTransaction::new(self)
     }
