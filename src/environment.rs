@@ -145,13 +145,25 @@ impl Environment {
         RoTransaction::new(self)
     }
 
+    fn resize_db_if_necessary(&self, headroom: Option<usize>) -> Result<()> {
+        const DEFAULT_RESIZE_VALUE: usize = 1 << 28;
+        let mut remaining_required_space = headroom.unwrap_or(DEFAULT_RESIZE_VALUE);
+        let target_headroom = headroom.unwrap_or(DEFAULT_RESIZE_VALUE);
+        while self.needs_resize(headroom)? {
+            self.do_resize(remaining_required_space)?;
+            if remaining_required_space <= target_headroom {
+                break;
+            } else {
+                remaining_required_space -= headroom.unwrap_or(DEFAULT_RESIZE_VALUE);
+            }
+        }
+        Ok(())
+    }
+
     /// Create a read-write transaction for use with the environment. This method will block while
     /// there are any other read-write transactions open on the environment.
     pub fn begin_rw_txn<'env>(&'env self, headroom: Option<usize>) -> Result<RwTransaction<'env>> {
-        const DEFAULT_RESIZE_VALUE: usize = 1 << 28;
-        while self.needs_resize(headroom)? {
-            self.do_resize(headroom.unwrap_or(DEFAULT_RESIZE_VALUE))?;
-        }
+        self.resize_db_if_necessary(headroom)?;
         RwTransaction::new(self)
     }
 
