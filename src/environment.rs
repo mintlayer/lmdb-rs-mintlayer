@@ -148,10 +148,10 @@ impl Environment {
     fn resize_db_if_necessary(&self, headroom: Option<usize>) -> Result<()> {
         const DEFAULT_RESIZE_VALUE: usize = 1 << 28;
         let mut remaining_required_space = headroom.unwrap_or(DEFAULT_RESIZE_VALUE);
-        let target_headroom = headroom.unwrap_or(DEFAULT_RESIZE_VALUE);
+        let current_iteration_increase = headroom.unwrap_or(DEFAULT_RESIZE_VALUE);
         while self.needs_resize(headroom)? {
-            self.do_resize(remaining_required_space)?;
-            if remaining_required_space <= target_headroom {
+            self.do_resize(current_iteration_increase)?;
+            if current_iteration_increase >= remaining_required_space {
                 break;
             } else {
                 remaining_required_space -= headroom.unwrap_or(DEFAULT_RESIZE_VALUE);
