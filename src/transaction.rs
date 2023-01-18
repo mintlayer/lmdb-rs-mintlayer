@@ -141,7 +141,8 @@ pub trait Transaction: Sized {
 /// An LMDB read-only transaction.
 pub struct RoTransaction<'env> {
     txn: *mut ffi::MDB_txn,
-    _guard: TransactionGuard,
+    env: &'env Environment,
+    _guard: TransactionGuard<'env>,
     _marker: PhantomData<&'env ()>,
 }
 
@@ -166,7 +167,8 @@ impl<'env> RoTransaction<'env> {
             lmdb_result(ffi::mdb_txn_begin(env.env(), ptr::null_mut(), ffi::MDB_RDONLY, &mut txn))?;
             Ok(RoTransaction {
                 txn,
-                _guard: TransactionGuard::new(),
+                env,
+                _guard: TransactionGuard::new(env),
                 _marker: PhantomData,
             })
         }
@@ -186,12 +188,14 @@ impl<'env> RoTransaction<'env> {
     /// database size may grow much more rapidly than otherwise.
     pub fn reset(self) -> InactiveTransaction<'env> {
         let txn = self.txn;
+        let env = self.env;
         unsafe {
             mem::forget(self);
             ffi::mdb_txn_reset(txn)
         };
         InactiveTransaction {
             txn,
+            env,
             _marker: PhantomData,
         }
     }
@@ -206,6 +210,7 @@ impl<'env> Transaction for RoTransaction<'env> {
 /// An inactive read-only transaction.
 pub struct InactiveTransaction<'env> {
     txn: *mut ffi::MDB_txn,
+    env: &'env Environment,
     _marker: PhantomData<&'env ()>,
 }
 
@@ -229,13 +234,15 @@ impl<'env> InactiveTransaction<'env> {
     /// released by `RoTransaction::reset`.
     pub fn renew(self) -> Result<RoTransaction<'env>> {
         let txn = self.txn;
+        let env = self.env;
         unsafe {
             mem::forget(self);
             lmdb_result(ffi::mdb_txn_renew(txn))?
         };
         Ok(RoTransaction {
             txn,
-            _guard: TransactionGuard::new(),
+            env,
+            _guard: TransactionGuard::new(env),
             _marker: PhantomData,
         })
     }
@@ -244,7 +251,8 @@ impl<'env> InactiveTransaction<'env> {
 /// An LMDB read-write transaction.
 pub struct RwTransaction<'env> {
     txn: *mut ffi::MDB_txn,
-    _guard: TransactionGuard,
+    env: &'env Environment,
+    _guard: TransactionGuard<'env>,
     _marker: PhantomData<&'env ()>,
 }
 
@@ -269,7 +277,8 @@ impl<'env> RwTransaction<'env> {
             lmdb_result(ffi::mdb_txn_begin(env.env(), ptr::null_mut(), EnvironmentFlags::empty().bits(), &mut txn))?;
             Ok(RwTransaction {
                 txn,
-                _guard: TransactionGuard::new(),
+                env,
+                _guard: TransactionGuard::new(env),
                 _marker: PhantomData,
             })
         }
@@ -414,7 +423,8 @@ impl<'env> RwTransaction<'env> {
         }
         Ok(RwTransaction {
             txn: nested,
-            _guard: TransactionGuard::new(),
+            env: self.env,
+            _guard: TransactionGuard::new(self.env),
             _marker: PhantomData,
         })
     }

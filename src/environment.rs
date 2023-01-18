@@ -9,6 +9,7 @@ use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 use std::sync::Mutex;
+use std::sync::atomic::AtomicU32;
 use std::{
     fmt,
     mem,
@@ -59,6 +60,8 @@ impl OsStrExtLmdb for OsStr {
 /// An environment supports multiple databases, all residing in the same shared-memory map.
 pub struct Environment {
     env: *mut ffi::MDB_env,
+    tx_count: AtomicU32,
+    tx_blocker_count: AtomicU32,
     dbi_open_mutex: Mutex<()>,
 }
 
@@ -183,6 +186,16 @@ impl Environment {
                 },
             ))
         }
+    }
+
+    /// Return the number of transactions currently running; controlled with TransactionGuard objects
+    pub(crate) fn tx_count(&self) -> &AtomicU32 {
+        &self.tx_count
+    }
+
+    /// Return the number of requests to block any new transactions, controlled with ScopedTransactionBlocker
+    pub(crate) fn tx_blocker_count(&self) -> &AtomicU32 {
+        &self.tx_blocker_count
     }
 
     /// Closes the database handle. Normally unnecessary.
@@ -331,8 +344,8 @@ impl Environment {
         let new_map_size = env_info.map_size().checked_add(increase_size).expect("LMDB resize size addition failed");
         let new_map_size = new_map_size + stat.page_size() as usize;
 
-        let _tx_blocker = ScopedTransactionBlocker::new();
-        TransactionGuard::wait_for_transactions_to_finish();
+        let _tx_blocker = ScopedTransactionBlocker::new(self);
+        TransactionGuard::wait_for_transactions_to_finish(self);
 
         self.set_map_size(new_map_size)?;
 
@@ -508,6 +521,8 @@ impl EnvironmentBuilder {
         }
         Ok(Environment {
             env,
+            tx_count: AtomicU32::new(0),
+            tx_blocker_count: AtomicU32::new(0),
             dbi_open_mutex: Mutex::new(()),
         })
     }
