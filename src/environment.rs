@@ -1,45 +1,23 @@
-use libc::{
-    c_uint,
-    size_t,
-};
+use libc::{c_uint, size_t};
 use std::ffi::CString;
 #[cfg(windows)]
 use std::ffi::OsStr;
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, AtomicU32};
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU32, AtomicBool};
-use std::{
-    fmt,
-    mem,
-    ptr,
-    result,
-};
+use std::{fmt, mem, ptr, result};
 
 use ffi;
 
-use byteorder::{
-    ByteOrder,
-    NativeEndian,
-};
+use byteorder::{ByteOrder, NativeEndian};
 
 use cursor::Cursor;
 use database::Database;
-use error::{
-    lmdb_result,
-    Error,
-    Result,
-};
-use flags::{
-    DatabaseFlags,
-    EnvironmentFlags,
-};
-use transaction::{
-    RoTransaction,
-    RwTransaction,
-    Transaction,
-};
+use error::{lmdb_result, Error, Result};
+use flags::{DatabaseFlags, EnvironmentFlags};
+use transaction::{RoTransaction, RwTransaction, Transaction};
 
 use crate::transaction_guard::{ScopedTransactionBlocker, TransactionGuard};
 
@@ -55,6 +33,11 @@ impl OsStrExtLmdb for OsStr {
     }
 }
 
+pub struct DatabaseResizeInfo {
+    pub old_size: u64,
+    pub new_size: u64,
+}
+
 /// An LMDB environment.
 ///
 /// An environment supports multiple databases, all residing in the same shared-memory map.
@@ -65,6 +48,7 @@ pub struct Environment {
     tx_blocker_spinlock: AtomicBool,
     db_resize_lock: Mutex<()>,
     dbi_open_mutex: Mutex<()>,
+    resize_callback: Option<Box<dyn Fn(DatabaseResizeInfo)>>,
 }
 
 impl Environment {
@@ -76,6 +60,7 @@ impl Environment {
             max_readers: None,
             max_dbs: None,
             map_size: None,
+            resize_callback: None,
         }
     }
 
@@ -322,7 +307,7 @@ impl Environment {
 
         let current_map_size = env_info.map_size();
 
-        let current_percentage_used = size_used as f32/current_map_size as f32;
+        let current_percentage_used = size_used as f32 / current_map_size as f32;
 
         if let Some(given_headroom) = headroom {
             if env_info.map_size() < given_headroom.checked_add(size_used).expect("LMDB size check addition failed") {
@@ -348,14 +333,23 @@ impl Environment {
 
         // TODO(Sam): check available disk space
 
+        let old_map_size = env_info.map_size();
+
         // calculate new map size, and ensure it's an integer of OS page size
-        let new_map_size = env_info.map_size().checked_add(increase_size).expect("LMDB resize size addition failed");
+        let new_map_size = old_map_size.checked_add(increase_size).expect("LMDB resize size addition failed");
         let new_map_size = new_map_size + stat.page_size() as usize;
 
         let _tx_blocker = ScopedTransactionBlocker::new(self);
         TransactionGuard::wait_for_transactions_to_finish(self);
 
         self.set_map_size(new_map_size)?;
+
+        if let Some(resize_callback) = &self.resize_callback {
+            resize_callback(DatabaseResizeInfo {
+                old_size: old_map_size as u64,
+                new_size: new_map_size as u64,
+            });
+        }
 
         Ok(())
     }
@@ -468,9 +462,9 @@ impl Drop for Environment {
         // from a thread where a transaction was executed causes a SIGSEGV.
         // This issue was proven and tested in mintlayer-core under rare circumstances
         std::thread::scope(|s| {
-            s.spawn(||
-                unsafe { ffi::mdb_env_close(self.env) }
-            ).join().expect("Failed to join lmdb Drop for Environment thread");
+            s.spawn(|| unsafe { ffi::mdb_env_close(self.env) })
+                .join()
+                .expect("Failed to join lmdb Drop for Environment thread");
         });
     }
 }
@@ -480,12 +474,12 @@ impl Drop for Environment {
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// Options for opening or creating an environment.
-#[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub struct EnvironmentBuilder {
     flags: EnvironmentFlags,
     max_readers: Option<c_uint>,
     max_dbs: Option<c_uint>,
     map_size: Option<size_t>,
+    resize_callback: Option<Box<dyn Fn(DatabaseResizeInfo)>>,
 }
 
 impl EnvironmentBuilder {
@@ -495,7 +489,7 @@ impl EnvironmentBuilder {
     ///
     /// The path may not contain the null character, Windows UNC (Uniform Naming Convention)
     /// paths are not supported either.
-    pub fn open(&self, path: &Path) -> Result<Environment> {
+    pub fn open(self, path: &Path) -> Result<Environment> {
         self.open_with_permissions(path, 0o644)
     }
 
@@ -505,7 +499,7 @@ impl EnvironmentBuilder {
     ///
     /// The path may not contain the null character, Windows UNC (Uniform Naming Convention)
     /// paths are not supported either.
-    pub fn open_with_permissions(&self, path: &Path, mode: ffi::mdb_mode_t) -> Result<Environment> {
+    pub fn open_with_permissions(self, path: &Path, mode: ffi::mdb_mode_t) -> Result<Environment> {
         let mut env: *mut ffi::MDB_env = ptr::null_mut();
         unsafe {
             lmdb_try!(ffi::mdb_env_create(&mut env));
@@ -534,11 +528,12 @@ impl EnvironmentBuilder {
             tx_blocker_spinlock: AtomicBool::new(false),
             db_resize_lock: Mutex::new(()),
             dbi_open_mutex: Mutex::new(()),
+            resize_callback: self.resize_callback,
         })
     }
 
     /// Sets the provided options in the environment.
-    pub fn set_flags(&mut self, flags: EnvironmentFlags) -> &mut EnvironmentBuilder {
+    pub fn set_flags(mut self, flags: EnvironmentFlags) -> EnvironmentBuilder {
         self.flags = flags;
         self
     }
@@ -550,7 +545,7 @@ impl EnvironmentBuilder {
     /// table slot to the current thread until the environment closes or the thread exits. If
     /// `MDB_NOTLS` is in use, `Environment::open_txn` instead ties the slot to the `Transaction`
     /// object until it or the `Environment` object is destroyed.
-    pub fn set_max_readers(&mut self, max_readers: c_uint) -> &mut EnvironmentBuilder {
+    pub fn set_max_readers(mut self, max_readers: c_uint) -> EnvironmentBuilder {
         self.max_readers = Some(max_readers);
         self
     }
@@ -564,7 +559,7 @@ impl EnvironmentBuilder {
     /// Currently a moderate number of slots are cheap but a huge number gets
     /// expensive: 7-120 words per transaction, and every `Transaction::open_db`
     /// does a linear search of the opened slots.
-    pub fn set_max_dbs(&mut self, max_dbs: c_uint) -> &mut EnvironmentBuilder {
+    pub fn set_max_dbs(mut self, max_dbs: c_uint) -> EnvironmentBuilder {
         self.max_dbs = Some(max_dbs);
         self
     }
@@ -579,8 +574,14 @@ impl EnvironmentBuilder {
     ///
     /// Any attempt to set a size smaller than the space already consumed
     /// by the environment will be silently changed to the current size of the used space.
-    pub fn set_map_size(&mut self, map_size: size_t) -> &mut EnvironmentBuilder {
+    pub fn set_map_size(mut self, map_size: size_t) -> EnvironmentBuilder {
         self.map_size = Some(map_size);
+        self
+    }
+
+    /// Set the function that will be called when a database resize happens
+    pub fn set_resize_callback(mut self, callback: Option<Box<dyn Fn(DatabaseResizeInfo)>>) -> EnvironmentBuilder {
+        self.resize_callback = callback;
         self
     }
 }
@@ -590,10 +591,7 @@ mod test {
 
     extern crate byteorder;
 
-    use self::byteorder::{
-        ByteOrder,
-        LittleEndian,
-    };
+    use self::byteorder::{ByteOrder, LittleEndian};
     use tempdir::TempDir;
 
     use flags::*;

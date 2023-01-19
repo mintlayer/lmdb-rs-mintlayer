@@ -89,12 +89,11 @@ mod test_utils {
 
         let dir = TempDir::new("test").unwrap();
 
-        let env = {
-            let mut builder = Environment::new();
-            builder.set_max_dbs(2);
-            builder.set_map_size(1_000_000);
-            builder.open(dir.path()).expect("open lmdb env")
-        };
+        let env = Environment::new().
+        set_max_dbs(2).
+        set_map_size(1_000_000).
+        open(dir.path()).expect("open lmdb env");
+
         let index = env.create_db(None, DatabaseFlags::DUP_SORT).expect("open index db");
 
         for height in 0..1000 {

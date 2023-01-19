@@ -15,7 +15,6 @@ use lmdb::{
     WriteFlags,
 };
 use rand::{
-    Rng,
     XorShiftRng,
 };
 use std::ptr;
@@ -90,7 +89,7 @@ fn bench_put_rand(b: &mut Bencher) {
     XorShiftRng::new_unseeded().shuffle(&mut items[..]);
 
     b.iter(|| {
-        let mut txn = env.begin_rw_txn().unwrap();
+        let mut txn = env.begin_rw_txn(None).unwrap();
         for &(ref key, ref data) in items.iter() {
             txn.put(db, key, data, WriteFlags::empty()).unwrap();
         }
