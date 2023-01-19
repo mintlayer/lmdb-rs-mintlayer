@@ -9,7 +9,7 @@ use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 use std::sync::Mutex;
-use std::sync::atomic::AtomicU32;
+use std::sync::atomic::{AtomicU32, AtomicBool};
 use std::{
     fmt,
     mem,
@@ -62,6 +62,7 @@ pub struct Environment {
     env: *mut ffi::MDB_env,
     tx_count: AtomicU32,
     tx_blocker_count: AtomicU32,
+    tx_blocker_spinlock: AtomicBool,
     db_resize_lock: Mutex<()>,
     dbi_open_mutex: Mutex<()>,
 }
@@ -198,6 +199,11 @@ impl Environment {
     /// Return the number of requests to block any new transactions, controlled with ScopedTransactionBlocker
     pub(crate) fn tx_blocker_count(&self) -> &AtomicU32 {
         &self.tx_blocker_count
+    }
+
+    /// Return the number of requests to block any new transactions, controlled with ScopedTransactionBlocker
+    pub(crate) fn tx_blocker_spinlock(&self) -> &AtomicBool {
+        &self.tx_blocker_spinlock
     }
 
     /// Closes the database handle. Normally unnecessary.
@@ -525,6 +531,7 @@ impl EnvironmentBuilder {
             env,
             tx_count: AtomicU32::new(0),
             tx_blocker_count: AtomicU32::new(0),
+            tx_blocker_spinlock: AtomicBool::new(false),
             db_resize_lock: Mutex::new(()),
             dbi_open_mutex: Mutex::new(()),
         })
