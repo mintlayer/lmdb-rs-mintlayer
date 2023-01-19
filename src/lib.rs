@@ -68,6 +68,7 @@ mod error;
 mod flags;
 mod transaction;
 mod transaction_guard;
+mod resize;
 
 #[cfg(test)]
 mod test_utils {

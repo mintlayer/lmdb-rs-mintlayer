@@ -19,6 +19,7 @@ use error::{lmdb_result, Error, Result};
 use flags::{DatabaseFlags, EnvironmentFlags};
 use transaction::{RoTransaction, RwTransaction, Transaction};
 
+use crate::resize::{DatabaseResizeInfo, DatabaseResizeSettings, DEFAULT_RESIZE_SETTINGS};
 use crate::transaction_guard::{ScopedTransactionBlocker, TransactionGuard};
 
 #[cfg(windows)]
@@ -33,11 +34,6 @@ impl OsStrExtLmdb for OsStr {
     }
 }
 
-pub struct DatabaseResizeInfo {
-    pub old_size: u64,
-    pub new_size: u64,
-}
-
 /// An LMDB environment.
 ///
 /// An environment supports multiple databases, all residing in the same shared-memory map.
@@ -49,6 +45,7 @@ pub struct Environment {
     db_resize_lock: Mutex<()>,
     dbi_open_mutex: Mutex<()>,
     resize_callback: Option<Box<dyn Fn(DatabaseResizeInfo)>>,
+    resize_settings: Option<DatabaseResizeSettings>,
 }
 
 impl Environment {
@@ -61,6 +58,7 @@ impl Environment {
             max_dbs: None,
             map_size: None,
             resize_callback: None,
+            resize_settings: None,
         }
     }
 
@@ -136,9 +134,10 @@ impl Environment {
     }
 
     fn resize_db_if_necessary(&self, headroom: Option<usize>) -> Result<()> {
-        const DEFAULT_RESIZE_VALUE: usize = 1 << 28;
-        let mut remaining_required_space = headroom.unwrap_or(DEFAULT_RESIZE_VALUE);
-        let current_iteration_increase = headroom.unwrap_or(DEFAULT_RESIZE_VALUE);
+        let resize_settings = self.resize_settings.as_ref().unwrap_or(&DEFAULT_RESIZE_SETTINGS);
+
+        let mut remaining_required_space = headroom.unwrap_or(resize_settings.default_resize_step);
+        let current_iteration_increase = headroom.unwrap_or(resize_settings.default_resize_step);
         while self.needs_resize(headroom)? {
             self.do_resize(current_iteration_increase)?;
             if current_iteration_increase >= remaining_required_space {
@@ -298,8 +297,6 @@ impl Environment {
     fn needs_resize(&self, headroom: Option<usize>) -> Result<bool> {
         // TODO(Sam): test resize checking
 
-        const RESIZE_PERCENT: f32 = 0.9;
-
         let stat = self.stat()?;
         let env_info = self.info()?;
 
@@ -315,7 +312,9 @@ impl Environment {
             }
         }
 
-        Ok(current_percentage_used > RESIZE_PERCENT)
+        let resize_settings = self.resize_settings.as_ref().unwrap_or(&DEFAULT_RESIZE_SETTINGS);
+
+        Ok(current_percentage_used > resize_settings.resize_trigger_percentage)
     }
 
     /// Do the resizing. This will pause all transactions (or will dead-lock), then resize
@@ -324,9 +323,8 @@ impl Environment {
     fn do_resize(&self, increase_size: usize) -> Result<()> {
         // TODO(Sam): test resizing
 
-        const MIN_MAP_SIZE_INCREASE: usize = 1 << 28;
-        const MAX_MAP_SIZE_INCREASE: usize = 1 << 31;
-        let increase_size = increase_size.clamp(MIN_MAP_SIZE_INCREASE, MAX_MAP_SIZE_INCREASE);
+        let resize_settings = self.resize_settings.as_ref().unwrap_or(&DEFAULT_RESIZE_SETTINGS);
+        let increase_size = increase_size.clamp(resize_settings.min_resize_step, resize_settings.min_resize_step);
 
         let stat = self.stat()?;
         let env_info = self.info()?;
@@ -480,6 +478,7 @@ pub struct EnvironmentBuilder {
     max_dbs: Option<c_uint>,
     map_size: Option<size_t>,
     resize_callback: Option<Box<dyn Fn(DatabaseResizeInfo)>>,
+    resize_settings: Option<DatabaseResizeSettings>,
 }
 
 impl EnvironmentBuilder {
@@ -529,6 +528,7 @@ impl EnvironmentBuilder {
             db_resize_lock: Mutex::new(()),
             dbi_open_mutex: Mutex::new(()),
             resize_callback: self.resize_callback,
+            resize_settings: self.resize_settings,
         })
     }
 
@@ -582,6 +582,12 @@ impl EnvironmentBuilder {
     /// Set the function that will be called when a database resize happens
     pub fn set_resize_callback(mut self, callback: Option<Box<dyn Fn(DatabaseResizeInfo)>>) -> EnvironmentBuilder {
         self.resize_callback = callback;
+        self
+    }
+
+    /// The settings that control when and how resize happens
+    pub fn set_resize_settings(mut self, settings: DatabaseResizeSettings) -> EnvironmentBuilder {
+        self.resize_settings = Some(settings);
         self
     }
 }
