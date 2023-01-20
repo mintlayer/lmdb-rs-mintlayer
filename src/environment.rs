@@ -335,7 +335,7 @@ impl Environment {
 
         // calculate new map size, and ensure it's an integer of OS page size
         let new_map_size = old_map_size.checked_add(increase_size).expect("LMDB resize size addition failed");
-        let new_map_size = new_map_size + stat.page_size() as usize;
+        let new_map_size = new_map_size + new_map_size % stat.page_size() as usize;
 
         let _tx_blocker = ScopedTransactionBlocker::new(self);
         TransactionGuard::wait_for_transactions_to_finish(self);
