@@ -4,7 +4,7 @@ use std::ffi::CString;
 use std::ffi::OsStr;
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32};
 use std::sync::Mutex;
 use std::{fmt, mem, ptr, result};
@@ -46,6 +46,7 @@ pub struct Environment {
     dbi_open_mutex: Mutex<()>,
     resize_callback: Option<Box<dyn Fn(DatabaseResizeInfo)>>,
     resize_settings: Option<DatabaseResizeSettings>,
+    db_path: PathBuf,
 }
 
 impl Environment {
@@ -329,13 +330,16 @@ impl Environment {
         let stat = self.stat()?;
         let env_info = self.info()?;
 
-        // TODO(Sam): check available disk space
-
         let old_map_size = env_info.map_size();
 
         // calculate new map size, and ensure it's an integer of OS page size
         let new_map_size = old_map_size.checked_add(increase_size).expect("LMDB resize size addition failed");
         let new_map_size = new_map_size + new_map_size % stat.page_size() as usize;
+
+        // Check available disk space
+        let free_space = fs4::free_space(&self.db_path).expect("Failed to get remaining disk space for db resize");
+        let final_increase = new_map_size.checked_sub(old_map_size).expect("Resize invariant broken: new_map_size < old_map_size") as u64;
+        assert!(free_space < final_increase, "LMDB Database resize failed. Available free disk space {} bytes is not big enough; required: {} bytes", free_space, final_increase);
 
         let _tx_blocker = ScopedTransactionBlocker::new(self);
         TransactionGuard::wait_for_transactions_to_finish(self);
@@ -529,6 +533,7 @@ impl EnvironmentBuilder {
             dbi_open_mutex: Mutex::new(()),
             resize_callback: self.resize_callback,
             resize_settings: self.resize_settings,
+            db_path: path.to_owned(),
         })
     }
 
