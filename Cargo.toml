@@ -30,6 +30,7 @@ bitflags = "1"
 byteorder = "1"
 libc = "0.2"
 fs4 = { version = "0.6", features = ["sync"] }
+rm_rf = "0.6"
 
 # In order to ensure that we test lmdb-rkv in CI against the in-tree version
 # of lmdb-rkv-sys, we specify the dependency as a path here.

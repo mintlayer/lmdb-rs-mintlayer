@@ -1,4 +1,5 @@
 /// The information that will be sent in a callback when a resize happens
+#[derive(Debug, Clone)]
 pub struct DatabaseResizeInfo {
     pub old_size: u64,
     pub new_size: u64,

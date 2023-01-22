@@ -301,7 +301,9 @@ impl Environment {
         let stat = self.stat()?;
         let env_info = self.info()?;
 
-        let size_used = stat.page_size() as usize - env_info.last_pgno();
+        // size_used doesn't include data yet to be committed. This will work only
+        // at the beginning of a transaction
+        let size_used = stat.page_size() as usize * env_info.last_pgno();
 
         let current_map_size = env_info.map_size();
 
@@ -609,6 +611,8 @@ mod test {
 
     extern crate byteorder;
 
+    use std::{collections::BTreeMap, sync::Arc};
+
     use self::byteorder::{ByteOrder, LittleEndian};
     use tempdir::TempDir;
 
@@ -795,5 +799,67 @@ mod test {
         env.set_map_size(2 * default_size).unwrap();
         info = env.info().unwrap();
         assert_eq!(info.map_size(), 2 * default_size);
+    }
+
+    #[must_use]
+    fn create_random_data_map_with_target_byte_size(required_size: usize) -> BTreeMap<Vec<u8>, Vec<u8>> {
+        let mut result = BTreeMap::new();
+
+        let mut total_size = 0;
+
+        while total_size < required_size {
+            let key_size = 1 + rand::random::<usize>() % 500;
+            let key = (0..key_size).map(|_| rand::random::<u8>()).collect::<Vec<_>>();
+            let val_size = 1 + rand::random::<usize>() % 10000;
+            let val = (0..val_size).map(|_| rand::random::<u8>()).collect::<Vec<_>>();
+            result.insert(key, val);
+
+            total_size += key_size;
+            total_size += val_size;
+        }
+
+        result
+    }
+
+    #[test]
+    fn test_auto_resize() {
+        let resize_actions = Arc::new(Mutex::new(Vec::new()));
+
+        let resize_actions_for_check = Arc::clone(&resize_actions);
+        let resize_actions = Arc::clone(&resize_actions);
+        let resize_callback = Box::new(move |v| resize_actions.lock().unwrap().push(v));
+
+        let resize_settings = DatabaseResizeSettings {
+            min_resize_step: 1 << 20,
+            max_resize_step: 1 << 21,
+            default_resize_step: 1 << 20,
+            resize_trigger_percentage: 0.9,
+        };
+
+        rm_rf::ensure_removed("test_resize").unwrap();
+        let dir = TempDir::new("test_resize").unwrap();
+        let initial_map_size = 1 << 20;
+        let env = Environment::new()
+            .set_map_size(initial_map_size)
+            .set_resize_callback(Some(resize_callback))
+            .set_resize_settings(resize_settings)
+            .open(dir.path())
+            .unwrap();
+        let db = env.create_db(None, DatabaseFlags::default()).unwrap();
+
+        let info = env.info().unwrap();
+        let map_size = info.map_size();
+
+        assert_eq!(initial_map_size, map_size);
+
+        let data = create_random_data_map_with_target_byte_size(initial_map_size * 2);
+
+        for (key, val) in data {
+            let mut rw_tx = env.begin_rw_txn(None).unwrap();
+            rw_tx.put(db, &key, &val, WriteFlags::empty()).unwrap();
+            rw_tx.commit().unwrap();
+        }
+
+        assert!(resize_actions_for_check.lock().unwrap().len() > 0);
     }
 }

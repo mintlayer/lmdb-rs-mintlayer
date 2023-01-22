@@ -34,12 +34,19 @@ use flags::{
     WriteFlags,
 };
 
+use crate::transaction::private::TransactionSealedProps;
 use crate::transaction_guard::TransactionGuard;
 
+mod private {
+    pub trait TransactionSealedProps {
+        fn nullify(&mut self);
+        fn is_nullified(&self) -> bool;
+    }
+}
 /// An LMDB transaction.
 ///
 /// All database operations require a transaction.
-pub trait Transaction: Sized {
+pub trait Transaction: Sized + private::TransactionSealedProps {
     /// Returns a raw pointer to the underlying LMDB transaction.
     ///
     /// The caller **must** ensure that the pointer is not used after the
@@ -49,10 +56,10 @@ pub trait Transaction: Sized {
     /// Commits the transaction.
     ///
     /// Any pending operations will be saved.
-    fn commit(self) -> Result<()> {
+    fn commit(mut self) -> Result<()> {
         unsafe {
             let result = lmdb_result(ffi::mdb_txn_commit(self.txn()));
-            mem::forget(self);
+            self.nullify();
             result
         }
     }
@@ -139,6 +146,7 @@ pub trait Transaction: Sized {
 }
 
 /// An LMDB read-only transaction.
+#[must_use]
 pub struct RoTransaction<'env> {
     txn: *mut ffi::MDB_txn,
     env: &'env Environment,
@@ -154,7 +162,9 @@ impl<'env> fmt::Debug for RoTransaction<'env> {
 
 impl<'env> Drop for RoTransaction<'env> {
     fn drop(&mut self) {
-        unsafe { ffi::mdb_txn_abort(self.txn) }
+        if !self.is_nullified() {
+            unsafe { ffi::mdb_txn_abort(self.txn) }
+        }
     }
 }
 
@@ -162,7 +172,7 @@ impl<'env> RoTransaction<'env> {
     /// Creates a new read-only transaction in the given environment. Prefer
     /// using `Environment::begin_ro_txn`.
     pub(crate) fn new(env: &'env Environment) -> Result<RoTransaction<'env>> {
-        let mut txn: *mut ffi::MDB_txn = ptr::null_mut();
+        let mut txn = ptr::null_mut();
         unsafe {
             lmdb_result(ffi::mdb_txn_begin(env.env(), ptr::null_mut(), ffi::MDB_RDONLY, &mut txn))?;
             Ok(RoTransaction {
@@ -204,6 +214,16 @@ impl<'env> RoTransaction<'env> {
 impl<'env> Transaction for RoTransaction<'env> {
     fn txn(&self) -> *mut ffi::MDB_txn {
         self.txn
+    }
+}
+
+impl<'env> private::TransactionSealedProps for RoTransaction<'env> {
+    fn nullify(&mut self) {
+        self.txn = std::ptr::null_mut();
+    }
+
+    fn is_nullified(&self) -> bool {
+        self.txn == std::ptr::null_mut()
     }
 }
 
@@ -249,6 +269,7 @@ impl<'env> InactiveTransaction<'env> {
 }
 
 /// An LMDB read-write transaction.
+#[must_use]
 pub struct RwTransaction<'env> {
     txn: *mut ffi::MDB_txn,
     env: &'env Environment,
@@ -264,7 +285,9 @@ impl<'env> fmt::Debug for RwTransaction<'env> {
 
 impl<'env> Drop for RwTransaction<'env> {
     fn drop(&mut self) {
-        unsafe { ffi::mdb_txn_abort(self.txn) }
+        if !self.is_nullified() {
+            unsafe { ffi::mdb_txn_abort(self.txn) }
+        }
     }
 }
 
@@ -272,7 +295,7 @@ impl<'env> RwTransaction<'env> {
     /// Creates a new read-write transaction in the given environment. Prefer
     /// using `Environment::begin_ro_txn`.
     pub(crate) fn new(env: &'env Environment) -> Result<RwTransaction<'env>> {
-        let mut txn: *mut ffi::MDB_txn = ptr::null_mut();
+        let mut txn = ptr::null_mut();
         unsafe {
             lmdb_result(ffi::mdb_txn_begin(env.env(), ptr::null_mut(), EnvironmentFlags::empty().bits(), &mut txn))?;
             Ok(RwTransaction {
@@ -433,6 +456,16 @@ impl<'env> RwTransaction<'env> {
 impl<'env> Transaction for RwTransaction<'env> {
     fn txn(&self) -> *mut ffi::MDB_txn {
         self.txn
+    }
+}
+
+impl<'env> private::TransactionSealedProps for RwTransaction<'env> {
+    fn nullify(&mut self) {
+        self.txn = std::ptr::null_mut();
+    }
+
+    fn is_nullified(&self) -> bool {
+        self.txn == std::ptr::null_mut()
     }
 }
 
