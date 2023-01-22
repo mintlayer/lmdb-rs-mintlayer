@@ -338,8 +338,15 @@ impl Environment {
 
         // Check available disk space
         let free_space = fs4::free_space(&self.db_path).expect("Failed to get remaining disk space for db resize");
-        let final_increase = new_map_size.checked_sub(old_map_size).expect("Resize invariant broken: new_map_size < old_map_size") as u64;
-        assert!(free_space < final_increase, "LMDB Database resize failed. Available free disk space {} bytes is not big enough; required: {} bytes", free_space, final_increase);
+        let final_increase = new_map_size
+            .checked_sub(old_map_size)
+            .expect("Resize invariant broken: new_map_size < old_map_size") as u64;
+        assert!(
+            free_space < final_increase,
+            "LMDB Database resize failed. Available free disk space {} bytes is not big enough; required: {} bytes",
+            free_space,
+            final_increase
+        );
 
         let _tx_blocker = ScopedTransactionBlocker::new(self);
         TransactionGuard::wait_for_transactions_to_finish(self);
