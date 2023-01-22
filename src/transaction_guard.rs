@@ -79,5 +79,3 @@ impl<'a> Drop for SpinLock<'a> {
         self.lock.store(false, Ordering::Release);
     }
 }
-
-// TODO(Sam): tests

@@ -296,8 +296,6 @@ impl Environment {
     /// 1. The headroom + currently used size don't fit in map_size()
     /// 2. More than RESIZE_PERCENTage is used of the database
     fn needs_resize(&self, headroom: Option<usize>) -> Result<bool> {
-        // TODO(Sam): test resize checking
-
         let stat = self.stat()?;
         let env_info = self.info()?;
 
@@ -324,8 +322,6 @@ impl Environment {
     /// Keep in mind that a single resize step cannot be larger than 1 << 31, due to usize limitations
     /// this is due to the FFI using usize while lmdb uses mdb_size_t, which is always u64
     fn do_resize(&self, increase_size: usize) -> Result<()> {
-        // TODO(Sam): test resizing
-
         let resize_settings = self.resize_settings.as_ref().unwrap_or(&DEFAULT_RESIZE_SETTINGS);
         let increase_size = increase_size.clamp(resize_settings.min_resize_step, resize_settings.min_resize_step);
 
