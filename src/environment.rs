@@ -838,7 +838,7 @@ mod test {
         let env = Environment::new()
             .set_map_size(initial_map_size)
             .set_resize_callback(Some(resize_callback))
-            .set_resize_settings(resize_settings)
+            .set_resize_settings(resize_settings.clone())
             .open(dir.path())
             .unwrap();
         let db = env.create_db(None, DatabaseFlags::default()).unwrap();
@@ -856,6 +856,12 @@ mod test {
             rw_tx.commit().unwrap();
         }
 
-        assert!(resize_actions_for_check.lock().unwrap().len() > 0);
+        let resize_action_result = resize_actions_for_check.lock().unwrap().clone();
+        assert!(resize_action_result.len() > 0);
+        for act in resize_action_result {
+            assert!(act.old_size < act.new_size);
+            assert!(act.new_size - act.old_size >= resize_settings.min_resize_step as u64);
+            assert!(act.new_size - act.old_size <= resize_settings.max_resize_step as u64);
+        }
     }
 }
