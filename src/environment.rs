@@ -342,7 +342,7 @@ impl Environment {
             .checked_sub(old_map_size)
             .expect("Resize invariant broken: new_map_size < old_map_size") as u64;
         assert!(
-            free_space < final_increase,
+            free_space > final_increase,
             "LMDB Database resize failed. Available free disk space {} bytes is not big enough; required: {} bytes",
             free_space,
             final_increase
