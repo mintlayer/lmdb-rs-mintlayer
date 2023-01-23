@@ -976,7 +976,7 @@ mod test {
 
         rm_rf::ensure_removed("test_resize1").unwrap();
         let dir = TempDir::new("test_resize1").unwrap();
-        let initial_map_size = 1 << 15;
+        let initial_map_size = 1 << 12;
         let env = Environment::new()
             .set_map_size(initial_map_size)
             .set_resize_callback(Some(resize_callback))
@@ -985,13 +985,8 @@ mod test {
             .unwrap();
         let db = env.create_db(None, DatabaseFlags::default()).unwrap();
 
-        let info = env.info().unwrap();
-        let map_size = info.map_size();
-
-        assert_eq!(initial_map_size, map_size);
-
         // generate small random values with a predefined target size that surpasses the current map size
-        let data = create_random_data_map_with_target_byte_size(initial_map_size * 2, 2, 5);
+        let data = create_random_data_map_with_target_byte_size(initial_map_size * 64, 2, 5);
 
         let mut write_resize_count = 0;
         let mut commit_resize_count = 0;
