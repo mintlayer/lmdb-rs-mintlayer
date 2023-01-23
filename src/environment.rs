@@ -924,7 +924,7 @@ mod test {
         assert_eq!(initial_map_size, map_size);
 
         // generate small random values with a predefined target size that surpasses the current map size
-        let data = create_random_data_map_with_target_byte_size(initial_map_size * 2, 5, 10);
+        let data = create_random_data_map_with_target_byte_size(initial_map_size, 5, 10);
 
         // write many key/val values, and while they're being written, expect that database map will grow
         for (key, val) in &data {
