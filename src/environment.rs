@@ -292,6 +292,13 @@ impl Environment {
         unsafe { lmdb_result(ffi::mdb_env_set_mapsize(self.env(), size)) }
     }
 
+    // size_used doesn't include data yet to be committed. This will work only
+    // at the beginning of a transaction
+    fn map_occupied_size_inner(env_info: &Info, stat: &Stat) -> usize {
+        let size_used = stat.page_size() as usize * env_info.last_pgno();
+        size_used
+    }
+
     /// Check whether a resize is needed under two conditions:
     /// 1. The headroom + currently used size don't fit in map_size()
     /// 2. More than RESIZE_PERCENTage is used of the database
@@ -299,9 +306,7 @@ impl Environment {
         let stat = self.stat()?;
         let env_info = self.info()?;
 
-        // size_used doesn't include data yet to be committed. This will work only
-        // at the beginning of a transaction
-        let size_used = stat.page_size() as usize * env_info.last_pgno();
+        let size_used = Self::map_occupied_size_inner(&env_info, &stat);
 
         let current_map_size = env_info.map_size();
 
@@ -331,6 +336,8 @@ impl Environment {
 
         let old_map_size = env_info.map_size();
 
+        let current_occupied_ratio = Self::map_occupied_size_inner(&env_info, &stat);
+
         // calculate new map size, and ensure it's an integer of OS page size
         let new_map_size = old_map_size.checked_add(increase_size).expect("LMDB resize size addition failed");
         let new_map_size = new_map_size + new_map_size % stat.page_size() as usize;
@@ -356,6 +363,7 @@ impl Environment {
             resize_callback(DatabaseResizeInfo {
                 old_size: old_map_size as u64,
                 new_size: new_map_size as u64,
+                occupied_size_before_resize: current_occupied_ratio as u64,
             });
         }
 
@@ -804,15 +812,19 @@ mod test {
     }
 
     #[must_use]
-    fn create_random_data_map_with_target_byte_size(required_size: usize) -> BTreeMap<Vec<u8>, Vec<u8>> {
+    fn create_random_data_map_with_target_byte_size(
+        required_size: usize,
+        key_max_size: usize,
+        val_max_size: usize,
+    ) -> BTreeMap<Vec<u8>, Vec<u8>> {
         let mut result = BTreeMap::new();
 
         let mut total_size = 0;
 
         while total_size < required_size {
-            let key_size = 1 + rand::random::<usize>() % 500;
+            let key_size = 1 + rand::random::<usize>() % key_max_size;
             let key = (0..key_size).map(|_| rand::random::<u8>()).collect::<Vec<_>>();
-            let val_size = 1 + rand::random::<usize>() % 10000;
+            let val_size = 1 + rand::random::<usize>() % val_max_size;
             let val = (0..val_size).map(|_| rand::random::<u8>()).collect::<Vec<_>>();
             result.insert(key, val);
 
@@ -854,20 +866,95 @@ mod test {
 
         assert_eq!(initial_map_size, map_size);
 
-        let data = create_random_data_map_with_target_byte_size(initial_map_size * 2);
+        // generate random values with a predefined target size that surpasses the current map size
+        let data = create_random_data_map_with_target_byte_size(initial_map_size * 5, 500, 10000);
 
-        for (key, val) in data {
+        // write many key/val values, and while they're being written, expect that database map will grow
+        for (key, val) in &data {
             let mut rw_tx = env.begin_rw_txn(None).unwrap();
             rw_tx.put(db, &key, &val, WriteFlags::empty()).unwrap();
             rw_tx.commit().unwrap();
         }
 
+        // check resize steps
         let resize_action_result = resize_actions_for_check.lock().unwrap().clone();
         assert!(resize_action_result.len() > 0);
         for act in resize_action_result {
             assert!(act.old_size < act.new_size);
             assert!(act.new_size - act.old_size >= resize_settings.min_resize_step as u64);
             assert!(act.new_size - act.old_size <= resize_settings.max_resize_step as u64);
+        }
+
+        // ensure data is successfully written
+        let ro_tx = env.begin_ro_txn().unwrap();
+        for (key, val) in data {
+            assert_eq!(ro_tx.get(db, &key).unwrap(), val);
+        }
+    }
+
+    #[test]
+    fn test_slow_auto_resize() {
+        let resize_actions = Arc::new(Mutex::new(Vec::new()));
+
+        let resize_actions_for_check = Arc::clone(&resize_actions);
+        let resize_actions = Arc::clone(&resize_actions);
+        let resize_callback = Box::new(move |v| resize_actions.lock().unwrap().push(v));
+
+        let resize_settings = DatabaseResizeSettings {
+            min_resize_step: 1 << 20,
+            max_resize_step: 1 << 21,
+            default_resize_step: 1 << 20,
+            resize_trigger_percentage: 0.9,
+        };
+
+        rm_rf::ensure_removed("test_resize1").unwrap();
+        let dir = TempDir::new("test_resize1").unwrap();
+        let initial_map_size = 1 << 20;
+        let env = Environment::new()
+            .set_map_size(initial_map_size)
+            .set_resize_callback(Some(resize_callback))
+            .set_resize_settings(resize_settings.clone())
+            .open(dir.path())
+            .unwrap();
+        let db = env.create_db(None, DatabaseFlags::default()).unwrap();
+
+        let info = env.info().unwrap();
+        let map_size = info.map_size();
+
+        assert_eq!(initial_map_size, map_size);
+
+        // generate small random values with a predefined target size that surpasses the current map size
+        let data = create_random_data_map_with_target_byte_size(initial_map_size * 2, 5, 10);
+
+        // write many key/val values, and while they're being written, expect that database map will grow
+        for (key, val) in &data {
+            let mut rw_tx = env.begin_rw_txn(None).unwrap();
+            rw_tx.put(db, &key, &val, WriteFlags::empty()).unwrap();
+            rw_tx.commit().unwrap();
+        }
+
+        // check resize steps
+        let resize_action_result = resize_actions_for_check.lock().unwrap().clone();
+        assert!(resize_action_result.len() > 0);
+        for act in resize_action_result {
+            assert!(act.old_size < act.new_size);
+            assert!(act.new_size - act.old_size >= resize_settings.min_resize_step as u64);
+            assert!(act.new_size - act.old_size <= resize_settings.max_resize_step as u64);
+            // make sure that we always crossed the provided threshold before resizing
+            assert!(
+                act.occupied_size_before_resize as f32 / act.old_size as f32
+                    >= resize_settings.resize_trigger_percentage,
+                "resize ratio check failed: {} / {} >= {}",
+                act.occupied_size_before_resize as f32,
+                act.old_size as f32,
+                resize_settings.resize_trigger_percentage
+            )
+        }
+
+        // ensure data is successfully written
+        let ro_tx = env.begin_ro_txn().unwrap();
+        for (key, val) in data {
+            assert_eq!(ro_tx.get(db, &key).unwrap(), val);
         }
     }
 
@@ -901,12 +988,14 @@ mod test {
 
         assert_eq!(initial_map_size, map_size);
 
-        let headroom = 1 << 24;
+        let headroom = 1 << 25;
         let new_target_size = map_size + headroom;
 
+        // force resize by starting a read/write transaction with specified headroom
         let rw_tx = env.begin_rw_txn(Some(headroom)).unwrap();
-        rw_tx.commit().unwrap();
+        rw_tx.abort();
 
+        // ensure resizing went as expected
         let resize_action_result = resize_actions_for_check.lock().unwrap().clone();
         assert!(resize_action_result.len() > 0);
         for act in resize_action_result {

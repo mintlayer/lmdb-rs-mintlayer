@@ -3,6 +3,7 @@
 pub struct DatabaseResizeInfo {
     pub old_size: u64,
     pub new_size: u64,
+    pub occupied_size_before_resize: u64,
 }
 
 const DEFAULT_MIN_MAP_SIZE_INCREASE: usize = 1 << 28;
