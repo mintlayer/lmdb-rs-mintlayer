@@ -986,7 +986,7 @@ mod test {
         let db = env.create_db(None, DatabaseFlags::default()).unwrap();
 
         // generate small random values with a predefined target size that surpasses the current map size
-        let data = create_random_data_map_with_target_byte_size(initial_map_size * 1024, 2, 5);
+        let data = create_random_data_map_with_target_byte_size(initial_map_size * 256, 2, 5);
 
         let mut write_resize_count = 0;
         let mut commit_resize_count = 0;
@@ -999,6 +999,7 @@ mod test {
                     Ok(_) => (), // Success in writing value, let's continue to commit
                     Err(e) => match e {
                         Error::MapFull => {
+                            println!("Resizing on write...");
                             write_resize_count += 1;
                             drop(rw_tx);
                             env.do_resize(None).unwrap();
@@ -1012,6 +1013,7 @@ mod test {
                     Ok(_) => break, // Success in committing value, we can exit the inner loop
                     Err(e) => match e {
                         Error::MapFull => {
+                            println!("Resizing on commit...");
                             commit_resize_count += 1;
                             env.do_resize(None).unwrap();
                         },
