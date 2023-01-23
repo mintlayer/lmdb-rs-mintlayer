@@ -327,7 +327,7 @@ impl Environment {
     /// and return the new map size.
     /// Keep in mind that a single resize step cannot be larger than 1 << 31, due to usize limitations
     /// this is due to the FFI using usize while lmdb uses mdb_size_t, which is always u64
-    fn do_resize(&self, increase_size: Option<usize>) -> Result<usize> {
+    pub fn do_resize(&self, increase_size: Option<usize>) -> Result<usize> {
         let resize_settings = self.resize_settings.as_ref().unwrap_or(&DEFAULT_RESIZE_SETTINGS);
         let increase_size = increase_size.unwrap_or(resize_settings.default_resize_step);
         let increase_size = increase_size.clamp(resize_settings.min_resize_step, resize_settings.min_resize_step);
