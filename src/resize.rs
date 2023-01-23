@@ -8,7 +8,7 @@ pub struct DatabaseResizeInfo {
 
 const DEFAULT_MIN_MAP_SIZE_INCREASE: usize = 1 << 28;
 const DEFAULT_MAX_MAP_SIZE_INCREASE: usize = 1 << 31;
-const DEFAULT_RESIZE_VALUE: usize = 1 << 28;
+const DEFAULT_RESIZE_VALUE: usize = 1 << 30;
 const DEFAULT_RESIZE_PERCENT: f32 = 0.9;
 
 /// Settings that control resizing the database
