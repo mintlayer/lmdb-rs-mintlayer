@@ -142,7 +142,7 @@ impl Environment {
 
         let required_space = headroom.unwrap_or(resize_settings.default_resize_step);
         while self.needs_resize(headroom)? {
-            let new_map_size = self.do_resize(required_space)?;
+            let new_map_size = self.do_resize(Some(required_space))?;
             if new_map_size >= required_space + initial_map_size {
                 break;
             }
@@ -327,8 +327,9 @@ impl Environment {
     /// and return the new map size.
     /// Keep in mind that a single resize step cannot be larger than 1 << 31, due to usize limitations
     /// this is due to the FFI using usize while lmdb uses mdb_size_t, which is always u64
-    fn do_resize(&self, increase_size: usize) -> Result<usize> {
+    fn do_resize(&self, increase_size: Option<usize>) -> Result<usize> {
         let resize_settings = self.resize_settings.as_ref().unwrap_or(&DEFAULT_RESIZE_SETTINGS);
+        let increase_size = increase_size.unwrap_or(resize_settings.default_resize_step);
         let increase_size = increase_size.clamp(resize_settings.min_resize_step, resize_settings.min_resize_step);
 
         let stat = self.stat()?;
@@ -949,6 +950,92 @@ mod test {
                 act.old_size as f32,
                 resize_settings.resize_trigger_percentage
             )
+        }
+
+        // ensure data is successfully written
+        let ro_tx = env.begin_ro_txn().unwrap();
+        for (key, val) in data {
+            assert_eq!(ro_tx.get(db, &key).unwrap(), val);
+        }
+    }
+
+    #[test]
+    fn test_extremely_slow_resize_and_recover_from_mapfull_error() {
+        let resize_actions = Arc::new(Mutex::new(Vec::new()));
+
+        let resize_actions_for_check = Arc::clone(&resize_actions);
+        let resize_actions = Arc::clone(&resize_actions);
+        let resize_callback = Box::new(move |v| resize_actions.lock().unwrap().push(v));
+
+        let resize_settings = DatabaseResizeSettings {
+            min_resize_step: 1 << 15,
+            max_resize_step: 1 << 21,
+            default_resize_step: 1 << 15,
+            resize_trigger_percentage: 0.9,
+        };
+
+        rm_rf::ensure_removed("test_resize1").unwrap();
+        let dir = TempDir::new("test_resize1").unwrap();
+        let initial_map_size = 1 << 15;
+        let env = Environment::new()
+            .set_map_size(initial_map_size)
+            .set_resize_callback(Some(resize_callback))
+            .set_resize_settings(resize_settings.clone())
+            .open(dir.path())
+            .unwrap();
+        let db = env.create_db(None, DatabaseFlags::default()).unwrap();
+
+        let info = env.info().unwrap();
+        let map_size = info.map_size();
+
+        assert_eq!(initial_map_size, map_size);
+
+        // generate small random values with a predefined target size that surpasses the current map size
+        let data = create_random_data_map_with_target_byte_size(initial_map_size * 2, 2, 5);
+
+        let mut write_resize_count = 0;
+        let mut commit_resize_count = 0;
+
+        // write many key/val values, and while they're being written, expect that database map will grow
+        for (key, val) in &data {
+            loop {
+                let mut rw_tx = env.begin_rw_txn(None).unwrap();
+                match rw_tx.put(db, &key, &val, WriteFlags::empty()) {
+                    Ok(_) => (), // Success in writing value, let's continue to commit
+                    Err(e) => match e {
+                        Error::MapFull => {
+                            write_resize_count += 1;
+                            drop(rw_tx);
+                            env.do_resize(None).unwrap();
+                            continue; // resized, let's try again in the inner loop
+                        },
+                        _ => panic!("Error on put: {}", e),
+                    },
+                }
+
+                match rw_tx.commit() {
+                    Ok(_) => break, // Success in committing value, we can exit the inner loop
+                    Err(e) => match e {
+                        Error::MapFull => {
+                            commit_resize_count += 1;
+                            env.do_resize(None).unwrap();
+                        },
+                        _ => panic!("Error on commit: {}", e),
+                    },
+                }
+            }
+        }
+
+        assert!(write_resize_count > 0, "Test failed to trigger write resizes");
+        assert!(commit_resize_count > 0, "Test failed to trigger commit resizes");
+
+        // check resize steps
+        let resize_action_result = resize_actions_for_check.lock().unwrap().clone();
+        assert!(resize_action_result.len() > 0);
+        for act in resize_action_result {
+            assert!(act.old_size < act.new_size);
+            assert!(act.new_size - act.old_size >= resize_settings.min_resize_step as u64);
+            assert!(act.new_size - act.old_size <= resize_settings.max_resize_step as u64);
         }
 
         // ensure data is successfully written
