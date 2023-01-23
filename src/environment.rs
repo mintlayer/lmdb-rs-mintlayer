@@ -901,15 +901,15 @@ mod test {
         let resize_callback = Box::new(move |v| resize_actions.lock().unwrap().push(v));
 
         let resize_settings = DatabaseResizeSettings {
-            min_resize_step: 1 << 20,
+            min_resize_step: 1 << 19,
             max_resize_step: 1 << 21,
-            default_resize_step: 1 << 20,
+            default_resize_step: 1 << 19,
             resize_trigger_percentage: 0.9,
         };
 
         rm_rf::ensure_removed("test_resize1").unwrap();
         let dir = TempDir::new("test_resize1").unwrap();
-        let initial_map_size = 1 << 20;
+        let initial_map_size = 1 << 19;
         let env = Environment::new()
             .set_map_size(initial_map_size)
             .set_resize_callback(Some(resize_callback))
