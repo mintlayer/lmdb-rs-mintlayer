@@ -12,7 +12,7 @@ pub struct TransactionGuard<'a> {
 impl<'a> TransactionGuard<'a> {
     pub fn new(env: &'a Environment) -> Self {
         // ensure races won't happen in this scope
-        SpinLock::new(env.tx_blocker_spinlock());
+        let _lock = SpinLock::new(env.tx_blocker_spinlock());
 
         ScopedTransactionBlocker::wait_for_all_blockers(env);
         env.tx_count().fetch_add(1, Ordering::Relaxed);
@@ -58,6 +58,7 @@ impl<'a> Drop for ScopedTransactionBlocker<'a> {
     }
 }
 
+#[must_use = "TransactionGuard has no effect without holding its object"]
 struct SpinLock<'a> {
     lock: &'a AtomicBool,
 }
