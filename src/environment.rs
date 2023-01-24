@@ -343,7 +343,7 @@ impl Environment {
         let resize_settings = self.resize_settings.as_ref().unwrap_or(&DEFAULT_RESIZE_SETTINGS);
         let increase_size = increase_size
             .unwrap_or_else(|| Self::headroom_from_ratio(old_map_size, resize_settings.default_resize_ratio_percentage));
-        let increase_size = increase_size.clamp(resize_settings.min_resize_step, resize_settings.min_resize_step);
+        let increase_size = increase_size.clamp(resize_settings.min_resize_step, resize_settings.max_resize_step);
 
         let current_occupied_ratio = Self::map_occupied_size_inner(&env_info, &stat);
 
