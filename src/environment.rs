@@ -337,26 +337,47 @@ impl Environment {
     pub fn do_resize(&self, increase_size: Option<usize>) -> Result<usize> {
         let stat = self.stat()?;
         let env_info = self.info()?;
+        let system_page_size = stat.page_size() as usize;
 
         let old_map_size = env_info.map_size();
 
         let resize_settings = self.resize_settings.as_ref().unwrap_or(&DEFAULT_RESIZE_SETTINGS);
-        let increase_size = increase_size
-            .unwrap_or_else(|| Self::headroom_from_ratio(old_map_size, resize_settings.default_resize_ratio_percentage));
+        let increase_size = increase_size.unwrap_or_else(|| {
+            Self::headroom_from_ratio(old_map_size, resize_settings.default_resize_ratio_percentage)
+        });
         let increase_size = increase_size.clamp(resize_settings.min_resize_step, resize_settings.max_resize_step);
 
         let current_occupied_ratio = Self::map_occupied_size_inner(&env_info, &stat);
 
         // calculate new map size, and ensure it's an integer of OS page size
         let new_map_size = old_map_size.checked_add(increase_size).expect("LMDB resize size addition failed");
-        let new_map_size = new_map_size + new_map_size % stat.page_size() as usize;
-
-        // To prevent dead-locks (where we keep retrying to resize to the same size), we ensure that we're at least increasing the size by a page's size
-        let new_map_size = if new_map_size == old_map_size {
-            new_map_size + stat.page_size() as usize
+        let new_map_size = if new_map_size % system_page_size != 0 {
+            new_map_size + (system_page_size - new_map_size % system_page_size)
         } else {
             new_map_size
         };
+
+        // To prevent dead-locks (where we keep retrying to resize to the same size), we ensure that we're at least increasing the size by a page's size
+        let new_map_size = if new_map_size == old_map_size {
+            new_map_size + system_page_size
+        } else {
+            new_map_size
+        };
+
+        // Check the invariants of the resize
+        assert_eq!(
+            new_map_size % system_page_size,
+            0,
+            "Attempted resize with size {} not equal to integers of page size {}",
+            new_map_size,
+            stat.page_size()
+        );
+        assert!(
+            new_map_size > old_map_size,
+            "Attempted resize with new size <= old size: {} <= {}",
+            new_map_size,
+            old_map_size
+        );
 
         // Check available disk space
         let free_space = fs4::free_space(&self.db_path).expect("Failed to get remaining disk space for db resize");
@@ -1110,5 +1131,32 @@ mod test {
         let new_map_size = info.map_size();
 
         assert!(new_map_size >= new_target_size, "{} >= {} is false", new_map_size, new_target_size);
+    }
+
+    #[test]
+    fn test_resize_non_integer_page_size() {
+        let resize_settings = DatabaseResizeSettings {
+            min_resize_step: 1 << 17,
+            max_resize_step: 1 << 19,
+            default_resize_ratio_percentage: 10,
+            resize_trigger_percentage: 0.9,
+        };
+
+        rm_rf::ensure_removed("test_resize1").unwrap();
+        let dir = TempDir::new("test_resize1").unwrap();
+        let initial_map_size = 1 << 20;
+        let env = Environment::new()
+            .set_map_size(initial_map_size)
+            .set_resize_settings(resize_settings.clone())
+            .open(dir.path())
+            .unwrap();
+
+        let info = env.info().unwrap();
+        let map_size = info.map_size();
+
+        assert_eq!(initial_map_size, map_size);
+
+        // this should work as the function will round up page sizes
+        env.do_resize(Some((1 << 17) + 7)).unwrap();
     }
 }
