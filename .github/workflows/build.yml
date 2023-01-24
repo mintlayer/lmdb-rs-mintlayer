@@ -59,8 +59,6 @@ jobs:
       run: cargo test --all --release
     - name: Run tests debug
       run: cargo test --all
-    - name: Run bench release
-      run: cargo bench --all --release
     - name: Run bench debug
       run: cargo bench --all
 
@@ -111,8 +109,6 @@ jobs:
       run: cargo test --all --release
     - name: Run tests debug
       run: cargo test --all
-    - name: Run bench release
-      run: cargo bench --all --release
     - name: Run bench debug
       run: cargo bench --all
 
@@ -163,7 +159,5 @@ jobs:
       run: cargo test --all --release
     - name: Run tests debug
       run: cargo test --all
-    - name: Run bench release
-      run: cargo bench --all --release
     - name: Run bench debug
       run: cargo bench --all
