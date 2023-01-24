@@ -134,8 +134,17 @@ impl Environment {
         RoTransaction::new(self)
     }
 
+    fn float_to_usize(val: f64) -> usize {
+        if val > usize::MAX as f64 {
+            panic!("Failed to convert headroom value to usize (MAX hit); this means either database configuration is wrong or an invariant is broken");
+        } else if val < usize::MIN as f64 {
+            panic!("Failed to convert headroom value to usize (MIN hit); this means either database configuration is wrong or an invariant is broken");
+        }
+        val.round() as usize
+    }
+
     fn headroom_from_ratio(current_map_size: usize, resize_ratio: f32) -> usize {
-        (current_map_size as f64 * resize_ratio as f64) as usize
+        Self::float_to_usize(current_map_size as f64 * resize_ratio as f64)
     }
 
     fn resize_db_if_necessary(&self, headroom: Option<usize>) -> Result<()> {
