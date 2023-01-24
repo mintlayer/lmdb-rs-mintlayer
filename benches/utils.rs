@@ -1,9 +1,9 @@
-use tempdir::TempDir;
 use lmdb::{
     Environment,
     Transaction,
     WriteFlags,
 };
+use tempdir::TempDir;
 
 pub fn get_key(n: u32) -> String {
     format!("key{}", n)

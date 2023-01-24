@@ -20,9 +20,9 @@ use crate::error::{
     Error,
     Result,
 };
-use lmdb_sys as ffi;
 use crate::flags::WriteFlags;
 use crate::transaction::Transaction;
+use lmdb_sys as ffi;
 
 /// An LMDB cursor.
 pub trait Cursor<'txn>: Sized {
@@ -339,8 +339,8 @@ mod test {
 
     use super::*;
     use crate::environment::*;
-    use ffi::*;
     use crate::flags::*;
+    use ffi::*;
 
     #[test]
     fn test_get() {
