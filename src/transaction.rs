@@ -441,7 +441,7 @@ impl<'env> private::TransactionSealedProps for RwTransaction<'env> {
     }
 
     fn is_nullified(&self) -> bool {
-        self.txn == std::ptr::null_mut()
+        self.txn.is_null()
     }
 }
 
