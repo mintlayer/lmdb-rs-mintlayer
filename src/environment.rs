@@ -612,6 +612,7 @@ impl EnvironmentBuilder {
 
     /// The settings that control when and how resize happens
     pub fn set_resize_settings(mut self, settings: DatabaseResizeSettings) -> EnvironmentBuilder {
+        settings.validate();
         self.resize_settings = Some(settings);
         self
     }

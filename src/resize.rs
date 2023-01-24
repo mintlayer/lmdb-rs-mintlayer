@@ -39,6 +39,20 @@ impl DatabaseResizeSettings {
             resize_trigger_percentage: DEFAULT_RESIZE_PERCENT,
         }
     }
+
+    pub fn validate(&self) {
+        if self.min_resize_step > self.max_resize_step {
+            panic!("lmdb: Min step must be <= max step")
+        }
+
+        if self.default_resize_step <= 0 {
+            panic!("lmdb: Resize ratio must be > 0");
+        }
+
+        if self.resize_trigger_percentage < 0. {
+            panic!("lmdb: Resize trigger percentage must be >=0 ");
+        }
+    }
 }
 
 pub const DEFAULT_RESIZE_SETTINGS: DatabaseResizeSettings = DatabaseResizeSettings::make_default();
