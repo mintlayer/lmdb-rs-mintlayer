@@ -3,12 +3,6 @@
 
 #![deny(missing_docs)]
 
-extern crate byteorder;
-extern crate libc;
-extern crate lmdb_sys as ffi;
-
-#[cfg(test)]
-extern crate tempdir;
 #[macro_use]
 extern crate bitflags;
 
@@ -40,7 +34,7 @@ pub use transaction::{
 macro_rules! lmdb_try {
     ($expr:expr) => {{
         match $expr {
-            ::ffi::MDB_SUCCESS => (),
+            ffi::MDB_SUCCESS => (),
             err_code => return Err(crate::Error::from_err_code(err_code)),
         }
     }};
@@ -49,7 +43,7 @@ macro_rules! lmdb_try {
 macro_rules! lmdb_try_with_cleanup {
     ($expr:expr, $cleanup:expr) => {{
         match $expr {
-            ::ffi::MDB_SUCCESS => (),
+            ffi::MDB_SUCCESS => (),
             err_code => {
                 let _ = $cleanup;
                 return Err(crate::Error::from_err_code(err_code));

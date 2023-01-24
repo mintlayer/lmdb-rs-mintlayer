@@ -8,7 +8,7 @@ use std::{
     str,
 };
 
-use ffi;
+use lmdb_sys as ffi;
 
 /// An LMDB error kind.
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]

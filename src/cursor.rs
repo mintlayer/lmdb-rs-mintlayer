@@ -20,7 +20,7 @@ use crate::error::{
     Error,
     Result,
 };
-use ffi;
+use lmdb_sys as ffi;
 use crate::flags::WriteFlags;
 use crate::transaction::Transaction;
 

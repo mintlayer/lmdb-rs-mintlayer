@@ -2,7 +2,7 @@ use libc::c_uint;
 use std::ffi::CString;
 use std::ptr;
 
-use ffi;
+use lmdb_sys as ffi;
 
 use crate::error::{
     lmdb_result,

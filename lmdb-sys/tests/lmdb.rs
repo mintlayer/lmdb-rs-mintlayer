@@ -1,5 +1,3 @@
-extern crate lmdb_sys;
-
 use std::env;
 use std::path::PathBuf;
 use std::process::Command;

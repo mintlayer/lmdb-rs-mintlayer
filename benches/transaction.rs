@@ -1,9 +1,6 @@
 #![feature(test)]
 
-extern crate libc;
-extern crate lmdb;
-extern crate lmdb_sys as ffi;
-extern crate rand;
+use lmdb_sys as ffi;
 extern crate test;
 
 mod utils;

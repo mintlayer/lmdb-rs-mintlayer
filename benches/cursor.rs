@@ -1,7 +1,6 @@
 #![feature(test)]
 
-extern crate lmdb;
-extern crate lmdb_sys as ffi;
+use lmdb_sys as ffi;
 extern crate test;
 
 mod utils;

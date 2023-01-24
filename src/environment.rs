@@ -24,7 +24,7 @@ use std::{
     result,
 };
 
-use ffi;
+use lmdb_sys as ffi;
 
 use byteorder::{
     ByteOrder,
@@ -684,15 +684,12 @@ impl EnvironmentBuilder {
 
 #[cfg(test)]
 mod test {
-
-    extern crate byteorder;
-
     use std::{
         collections::BTreeMap,
         sync::Arc,
     };
 
-    use self::byteorder::{
+    use byteorder::{
         ByteOrder,
         LittleEndian,
     };

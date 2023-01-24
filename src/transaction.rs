@@ -12,7 +12,7 @@ use std::{
     slice,
 };
 
-use ffi;
+use lmdb_sys as ffi;
 
 use crate::cursor::{
     RoCursor,

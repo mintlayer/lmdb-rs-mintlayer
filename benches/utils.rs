@@ -1,7 +1,4 @@
-extern crate lmdb;
-extern crate tempdir;
-
-use self::tempdir::TempDir;
+use tempdir::TempDir;
 use lmdb::{
     Environment,
     Transaction,
