@@ -4,7 +4,10 @@ use std::ptr;
 
 use ffi;
 
-use error::{lmdb_result, Result};
+use error::{
+    lmdb_result,
+    Result,
+};
 
 /// A handle to an individual database in an environment.
 ///

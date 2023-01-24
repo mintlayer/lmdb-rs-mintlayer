@@ -1,10 +1,25 @@
 use std::marker::PhantomData;
-use std::{fmt, mem, ptr, result, slice};
+use std::{
+    fmt,
+    mem,
+    ptr,
+    result,
+    slice,
+};
 
-use libc::{c_uint, c_void, size_t, EINVAL};
+use libc::{
+    c_uint,
+    c_void,
+    size_t,
+    EINVAL,
+};
 
 use database::Database;
-use error::{lmdb_result, Error, Result};
+use error::{
+    lmdb_result,
+    Error,
+    Result,
+};
 use ffi;
 use flags::WriteFlags;
 use transaction::Transaction;

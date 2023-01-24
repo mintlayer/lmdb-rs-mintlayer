@@ -1,14 +1,38 @@
-use libc::{c_uint, c_void, size_t};
+use libc::{
+    c_uint,
+    c_void,
+    size_t,
+};
 use std::marker::PhantomData;
-use std::{fmt, mem, ptr, result, slice};
+use std::{
+    fmt,
+    mem,
+    ptr,
+    result,
+    slice,
+};
 
 use ffi;
 
-use cursor::{RoCursor, RwCursor};
+use cursor::{
+    RoCursor,
+    RwCursor,
+};
 use database::Database;
-use environment::{Environment, Stat};
-use error::{lmdb_result, Error, Result};
-use flags::{DatabaseFlags, EnvironmentFlags, WriteFlags};
+use environment::{
+    Environment,
+    Stat,
+};
+use error::{
+    lmdb_result,
+    Error,
+    Result,
+};
+use flags::{
+    DatabaseFlags,
+    EnvironmentFlags,
+    WriteFlags,
+};
 
 use crate::transaction::private::TransactionSealedProps;
 use crate::transaction_guard::TransactionGuard;
@@ -449,8 +473,14 @@ impl<'env> private::TransactionSealedProps for RwTransaction<'env> {
 mod test {
 
     use std::io::Write;
-    use std::sync::{Arc, Barrier};
-    use std::thread::{self, JoinHandle};
+    use std::sync::{
+        Arc,
+        Barrier,
+    };
+    use std::thread::{
+        self,
+        JoinHandle,
+    };
 
     use tempdir::TempDir;
 

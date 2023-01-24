@@ -1,27 +1,62 @@
-use libc::{c_uint, size_t};
+use libc::{
+    c_uint,
+    size_t,
+};
 use std::convert::TryInto;
 use std::ffi::CString;
 #[cfg(windows)]
 use std::ffi::OsStr;
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU32};
+use std::path::{
+    Path,
+    PathBuf,
+};
+use std::sync::atomic::{
+    AtomicBool,
+    AtomicU32,
+};
 use std::sync::Mutex;
-use std::{fmt, mem, ptr, result};
+use std::{
+    fmt,
+    mem,
+    ptr,
+    result,
+};
 
 use ffi;
 
-use byteorder::{ByteOrder, NativeEndian};
+use byteorder::{
+    ByteOrder,
+    NativeEndian,
+};
 
 use cursor::Cursor;
 use database::Database;
-use error::{lmdb_result, Error, Result};
-use flags::{DatabaseFlags, EnvironmentFlags};
-use transaction::{RoTransaction, RwTransaction, Transaction};
+use error::{
+    lmdb_result,
+    Error,
+    Result,
+};
+use flags::{
+    DatabaseFlags,
+    EnvironmentFlags,
+};
+use transaction::{
+    RoTransaction,
+    RwTransaction,
+    Transaction,
+};
 
-use crate::resize::{DatabaseResizeInfo, DatabaseResizeSettings, DEFAULT_RESIZE_SETTINGS};
-use crate::transaction_guard::{ScopedTransactionBlocker, TransactionGuard};
+use crate::resize::{
+    DatabaseResizeInfo,
+    DatabaseResizeSettings,
+    DEFAULT_RESIZE_SETTINGS,
+};
+use crate::transaction_guard::{
+    ScopedTransactionBlocker,
+    TransactionGuard,
+};
 
 #[cfg(windows)]
 /// Adding a 'missing' trait from windows OsStrExt
@@ -652,9 +687,15 @@ mod test {
 
     extern crate byteorder;
 
-    use std::{collections::BTreeMap, sync::Arc};
+    use std::{
+        collections::BTreeMap,
+        sync::Arc,
+    };
 
-    use self::byteorder::{ByteOrder, LittleEndian};
+    use self::byteorder::{
+        ByteOrder,
+        LittleEndian,
+    };
     use tempdir::TempDir;
 
     use flags::*;

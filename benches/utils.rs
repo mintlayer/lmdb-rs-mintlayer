@@ -2,7 +2,11 @@ extern crate lmdb;
 extern crate tempdir;
 
 use self::tempdir::TempDir;
-use lmdb::{Environment, Transaction, WriteFlags};
+use lmdb::{
+    Environment,
+    Transaction,
+    WriteFlags,
+};
 
 pub fn get_key(n: u32) -> String {
     format!("key{}", n)

@@ -10,10 +10,19 @@ mod utils;
 
 use ffi::*;
 use libc::size_t;
-use lmdb::{Transaction, WriteFlags};
-use rand::{seq::SliceRandom, SeedableRng};
+use lmdb::{
+    Transaction,
+    WriteFlags,
+};
+use rand::{
+    seq::SliceRandom,
+    SeedableRng,
+};
 use std::ptr;
-use test::{black_box, Bencher};
+use test::{
+    black_box,
+    Bencher,
+};
 use utils::*;
 
 #[bench]

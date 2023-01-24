@@ -7,9 +7,17 @@ extern crate test;
 mod utils;
 
 use ffi::*;
-use lmdb::{Cursor, Result, RoCursor, Transaction};
+use lmdb::{
+    Cursor,
+    Result,
+    RoCursor,
+    Transaction,
+};
 use std::ptr;
-use test::{black_box, Bencher};
+use test::{
+    black_box,
+    Bencher,
+};
 use utils::*;
 
 /// Benchmark of iterator sequential read performance.
