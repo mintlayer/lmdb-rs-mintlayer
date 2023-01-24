@@ -14,10 +14,7 @@ use lmdb::{
     Transaction,
     WriteFlags,
 };
-use rand::{
-    Rng,
-    XorShiftRng,
-};
+use rand::{SeedableRng, seq::SliceRandom};
 use std::ptr;
 use test::{
     black_box,
@@ -33,7 +30,7 @@ fn bench_get_rand(b: &mut Bencher) {
     let txn = env.begin_ro_txn().unwrap();
 
     let mut keys: Vec<String> = (0..n).map(get_key).collect();
-    XorShiftRng::new_unseeded().shuffle(&mut keys[..]);
+    keys.shuffle(&mut rand::rngs::StdRng::from_entropy());
 
     b.iter(|| {
         let mut i = 0usize;
@@ -52,7 +49,7 @@ fn bench_get_rand_raw(b: &mut Bencher) {
     let _txn = env.begin_ro_txn().unwrap();
 
     let mut keys: Vec<String> = (0..n).map(get_key).collect();
-    XorShiftRng::new_unseeded().shuffle(&mut keys[..]);
+    keys.shuffle(&mut rand::rngs::StdRng::from_entropy());
 
     let dbi = db.dbi();
     let txn = _txn.txn();
@@ -87,10 +84,10 @@ fn bench_put_rand(b: &mut Bencher) {
     let db = env.open_db(None).unwrap();
 
     let mut items: Vec<(String, String)> = (0..n).map(|n| (get_key(n), get_data(n))).collect();
-    XorShiftRng::new_unseeded().shuffle(&mut items[..]);
+    items.shuffle(&mut rand::rngs::StdRng::from_entropy());
 
     b.iter(|| {
-        let mut txn = env.begin_rw_txn().unwrap();
+        let mut txn = env.begin_rw_txn(None).unwrap();
         for &(ref key, ref data) in items.iter() {
             txn.put(db, key, data, WriteFlags::empty()).unwrap();
         }
@@ -105,7 +102,7 @@ fn bench_put_rand_raw(b: &mut Bencher) {
     let db = _env.open_db(None).unwrap();
 
     let mut items: Vec<(String, String)> = (0..n).map(|n| (get_key(n), get_data(n))).collect();
-    XorShiftRng::new_unseeded().shuffle(&mut items[..]);
+    items.shuffle(&mut rand::rngs::StdRng::from_entropy());
 
     let dbi = db.dbi();
     let env = _env.env();

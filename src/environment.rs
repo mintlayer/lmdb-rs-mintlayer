@@ -1,44 +1,27 @@
-use libc::{
-    c_uint,
-    size_t,
-};
+use libc::{c_uint, size_t};
+use std::convert::TryInto;
 use std::ffi::CString;
 #[cfg(windows)]
 use std::ffi::OsStr;
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU32};
 use std::sync::Mutex;
-use std::{
-    fmt,
-    mem,
-    ptr,
-    result,
-};
+use std::{fmt, mem, ptr, result};
 
 use ffi;
 
-use byteorder::{
-    ByteOrder,
-    NativeEndian,
-};
+use byteorder::{ByteOrder, NativeEndian};
 
 use cursor::Cursor;
 use database::Database;
-use error::{
-    lmdb_result,
-    Error,
-    Result,
-};
-use flags::{
-    DatabaseFlags,
-    EnvironmentFlags,
-};
-use transaction::{
-    RoTransaction,
-    RwTransaction,
-    Transaction,
-};
+use error::{lmdb_result, Error, Result};
+use flags::{DatabaseFlags, EnvironmentFlags};
+use transaction::{RoTransaction, RwTransaction, Transaction};
+
+use crate::resize::{DatabaseResizeInfo, DatabaseResizeSettings, DEFAULT_RESIZE_SETTINGS};
+use crate::transaction_guard::{ScopedTransactionBlocker, TransactionGuard};
 
 #[cfg(windows)]
 /// Adding a 'missing' trait from windows OsStrExt
@@ -57,7 +40,14 @@ impl OsStrExtLmdb for OsStr {
 /// An environment supports multiple databases, all residing in the same shared-memory map.
 pub struct Environment {
     env: *mut ffi::MDB_env,
+    tx_count: AtomicU32,
+    tx_blocker_count: AtomicU32,
+    tx_blocker_spinlock: AtomicBool,
+    db_resize_lock: Mutex<()>,
     dbi_open_mutex: Mutex<()>,
+    resize_callback: Option<Box<dyn Fn(DatabaseResizeInfo)>>,
+    resize_settings: Option<DatabaseResizeSettings>,
+    db_path: PathBuf,
 }
 
 impl Environment {
@@ -69,6 +59,8 @@ impl Environment {
             max_readers: None,
             max_dbs: None,
             map_size: None,
+            resize_callback: None,
+            resize_settings: None,
         }
     }
 
@@ -119,7 +111,7 @@ impl Environment {
     /// transaction.
     pub fn create_db<'env>(&'env self, name: Option<&str>, flags: DatabaseFlags) -> Result<Database> {
         let mutex = self.dbi_open_mutex.lock();
-        let txn = self.begin_rw_txn()?;
+        let txn = self.begin_rw_txn(None)?;
         let db = unsafe { txn.create_db(name, flags)? };
         txn.commit()?;
         drop(mutex);
@@ -143,9 +135,33 @@ impl Environment {
         RoTransaction::new(self)
     }
 
+    fn headroom_from_ratio(current_map_size: usize, resize_ratio: u32) -> usize {
+        ((current_map_size as u128 * resize_ratio as u128) / 100).try_into().expect("lmdb: Failed to convert headroom value to usize; this means either database configuration is wrong or an invariant is broken")
+    }
+
+    fn resize_db_if_necessary(&self, headroom: Option<usize>) -> Result<()> {
+        let resize_settings = self.resize_settings.as_ref().unwrap_or(&DEFAULT_RESIZE_SETTINGS);
+
+        let env_info = self.info().expect("Environment info retrieval failed while resizing");
+        let initial_map_size = env_info.map_size();
+
+        let required_space = headroom.unwrap_or_else(|| {
+            Self::headroom_from_ratio(initial_map_size, resize_settings.default_resize_ratio_percentage)
+        });
+        while self.needs_resize(headroom)? {
+            let new_map_size = self.do_resize(Some(required_space))?;
+            if new_map_size >= required_space + initial_map_size {
+                break;
+            }
+        }
+        Ok(())
+    }
+
     /// Create a read-write transaction for use with the environment. This method will block while
     /// there are any other read-write transactions open on the environment.
-    pub fn begin_rw_txn<'env>(&'env self) -> Result<RwTransaction<'env>> {
+    pub fn begin_rw_txn<'env>(&'env self, headroom: Option<usize>) -> Result<RwTransaction<'env>> {
+        let _lock = self.db_resize_lock.lock().expect("Database resize mutex lock failed");
+        self.resize_db_if_necessary(headroom)?;
         RwTransaction::new(self)
     }
 
@@ -165,6 +181,21 @@ impl Environment {
                 },
             ))
         }
+    }
+
+    /// Return the number of transactions currently running; controlled with TransactionGuard objects
+    pub(crate) fn tx_count(&self) -> &AtomicU32 {
+        &self.tx_count
+    }
+
+    /// Return the number of requests to block any new transactions, controlled with ScopedTransactionBlocker
+    pub(crate) fn tx_blocker_count(&self) -> &AtomicU32 {
+        &self.tx_blocker_count
+    }
+
+    /// Return the number of requests to block any new transactions, controlled with ScopedTransactionBlocker
+    pub(crate) fn tx_blocker_spinlock(&self) -> &AtomicBool {
+        &self.tx_blocker_spinlock
     }
 
     /// Closes the database handle. Normally unnecessary.
@@ -264,8 +295,117 @@ impl Environment {
     ///   processes need to either re-open the environment, or call set_map_size
     ///   with size 0 to update the environment. Otherwise, new transaction creation
     ///   will fail with `Error::MapResized`.
-    pub fn set_map_size(&mut self, size: size_t) -> Result<()> {
+    pub fn set_map_size(&self, size: size_t) -> Result<()> {
         unsafe { lmdb_result(ffi::mdb_env_set_mapsize(self.env(), size)) }
+    }
+
+    // size_used doesn't include data yet to be committed. This will work only
+    // at the beginning of a transaction
+    fn map_occupied_size_inner(env_info: &Info, stat: &Stat) -> usize {
+        let size_used = stat.page_size() as usize * env_info.last_pgno();
+        size_used
+    }
+
+    /// Check whether a resize is needed under two conditions:
+    /// 1. The headroom + currently used size don't fit in map_size()
+    /// 2. More than RESIZE_PERCENTage is used of the database
+    fn needs_resize(&self, headroom: Option<usize>) -> Result<bool> {
+        let stat = self.stat()?;
+        let env_info = self.info()?;
+
+        let size_used = Self::map_occupied_size_inner(&env_info, &stat);
+
+        let current_map_size = env_info.map_size();
+
+        let current_percentage_used = size_used as f32 / current_map_size as f32;
+
+        if let Some(given_headroom) = headroom {
+            if env_info.map_size() < given_headroom.checked_add(size_used).expect("LMDB size check addition failed") {
+                return Ok(true);
+            }
+        }
+
+        let resize_settings = self.resize_settings.as_ref().unwrap_or(&DEFAULT_RESIZE_SETTINGS);
+
+        Ok(current_percentage_used > resize_settings.resize_trigger_percentage)
+    }
+
+    /// Do the resizing. This will pause all transactions (or will dead-lock), then resize,
+    /// and return the new map size.
+    /// Keep in mind that a single resize step cannot be larger than 1 << 31, due to usize limitations
+    /// this is due to the FFI using usize while lmdb uses mdb_size_t, which is always u64
+    pub fn do_resize(&self, increase_size: Option<usize>) -> Result<usize> {
+        let stat = self.stat()?;
+        let env_info = self.info()?;
+        let system_page_size = stat.page_size() as usize;
+
+        let old_map_size = env_info.map_size();
+
+        let resize_settings = self.resize_settings.as_ref().unwrap_or(&DEFAULT_RESIZE_SETTINGS);
+        let increase_size = increase_size.unwrap_or_else(|| {
+            Self::headroom_from_ratio(old_map_size, resize_settings.default_resize_ratio_percentage)
+        });
+        let increase_size = increase_size.clamp(resize_settings.min_resize_step, resize_settings.max_resize_step);
+
+        let current_occupied_ratio = Self::map_occupied_size_inner(&env_info, &stat);
+
+        // calculate new map size, and ensure it's an integer of OS page size
+        let new_map_size = old_map_size.checked_add(increase_size).expect("LMDB resize size addition failed");
+        let new_map_size = if new_map_size % system_page_size != 0 {
+            new_map_size + (system_page_size - new_map_size % system_page_size)
+        } else {
+            new_map_size
+        };
+
+        // To prevent dead-locks (where we keep retrying to resize to the same size), we ensure that we're at least increasing the size by a page's size
+        let new_map_size = if new_map_size == old_map_size {
+            new_map_size + system_page_size
+        } else {
+            new_map_size
+        };
+
+        // Check the invariants of the resize
+        assert_eq!(
+            new_map_size % system_page_size,
+            0,
+            "Attempted resize with size {} not equal to integers of page size {}",
+            new_map_size,
+            stat.page_size()
+        );
+        assert!(
+            new_map_size > old_map_size,
+            "Attempted resize with new size <= old size: {} <= {}",
+            new_map_size,
+            old_map_size
+        );
+
+        // Check available disk space
+        let free_space = fs4::free_space(&self.db_path).expect("Failed to get remaining disk space for db resize");
+        let final_increase = new_map_size
+            .checked_sub(old_map_size)
+            .expect("Resize invariant broken: new_map_size < old_map_size") as u64;
+        assert!(
+            free_space > final_increase,
+            "LMDB Database resize failed. Available free disk space {} bytes is not big enough; required: {} bytes",
+            free_space,
+            final_increase
+        );
+
+        // There cannot be any transactions running while resizing
+        let _tx_blocker = ScopedTransactionBlocker::new(self);
+        TransactionGuard::wait_for_transactions_to_finish(self);
+
+        self.set_map_size(new_map_size)?;
+
+        if let Some(resize_callback) = &self.resize_callback {
+            resize_callback(DatabaseResizeInfo {
+                old_size: old_map_size as u64,
+                new_size: new_map_size as u64,
+                occupied_size_before_resize: current_occupied_ratio as u64,
+            });
+        }
+
+        Ok(new_map_size)
     }
 }
 
@@ -332,30 +472,35 @@ pub struct Info(ffi::MDB_envinfo);
 impl Info {
     /// Size of memory map.
     #[inline]
+    #[must_use]
     pub fn map_size(&self) -> usize {
         self.0.me_mapsize
     }
 
     /// Last used page number
     #[inline]
+    #[must_use]
     pub fn last_pgno(&self) -> usize {
         self.0.me_last_pgno
     }
 
     /// Last transaction ID
     #[inline]
+    #[must_use]
     pub fn last_txnid(&self) -> usize {
         self.0.me_last_txnid
     }
 
     /// Max reader slots in the environment
     #[inline]
+    #[must_use]
     pub fn max_readers(&self) -> u32 {
         self.0.me_maxreaders
     }
 
     /// Max reader slots used in the environment
     #[inline]
+    #[must_use]
     pub fn num_readers(&self) -> u32 {
         self.0.me_numreaders
     }
@@ -376,9 +521,9 @@ impl Drop for Environment {
         // from a thread where a transaction was executed causes a SIGSEGV.
         // This issue was proven and tested in mintlayer-core under rare circumstances
         std::thread::scope(|s| {
-            s.spawn(||
-                unsafe { ffi::mdb_env_close(self.env) }
-            ).join().expect("Failed to join lmdb Drop for Environment thread");
+            s.spawn(|| unsafe { ffi::mdb_env_close(self.env) })
+                .join()
+                .expect("Failed to join lmdb Drop for Environment thread");
         });
     }
 }
@@ -388,12 +533,13 @@ impl Drop for Environment {
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// Options for opening or creating an environment.
-#[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub struct EnvironmentBuilder {
     flags: EnvironmentFlags,
     max_readers: Option<c_uint>,
     max_dbs: Option<c_uint>,
     map_size: Option<size_t>,
+    resize_callback: Option<Box<dyn Fn(DatabaseResizeInfo)>>,
+    resize_settings: Option<DatabaseResizeSettings>,
 }
 
 impl EnvironmentBuilder {
@@ -403,7 +549,7 @@ impl EnvironmentBuilder {
     ///
     /// The path may not contain the null character, Windows UNC (Uniform Naming Convention)
     /// paths are not supported either.
-    pub fn open(&self, path: &Path) -> Result<Environment> {
+    pub fn open(self, path: &Path) -> Result<Environment> {
         self.open_with_permissions(path, 0o644)
     }
 
@@ -413,7 +559,7 @@ impl EnvironmentBuilder {
     ///
     /// The path may not contain the null character, Windows UNC (Uniform Naming Convention)
     /// paths are not supported either.
-    pub fn open_with_permissions(&self, path: &Path, mode: ffi::mdb_mode_t) -> Result<Environment> {
+    pub fn open_with_permissions(self, path: &Path, mode: ffi::mdb_mode_t) -> Result<Environment> {
         let mut env: *mut ffi::MDB_env = ptr::null_mut();
         unsafe {
             lmdb_try!(ffi::mdb_env_create(&mut env));
@@ -437,12 +583,19 @@ impl EnvironmentBuilder {
         }
         Ok(Environment {
             env,
+            tx_count: AtomicU32::new(0),
+            tx_blocker_count: AtomicU32::new(0),
+            tx_blocker_spinlock: AtomicBool::new(false),
+            db_resize_lock: Mutex::new(()),
             dbi_open_mutex: Mutex::new(()),
+            resize_callback: self.resize_callback,
+            resize_settings: self.resize_settings,
+            db_path: path.to_owned(),
         })
     }
 
     /// Sets the provided options in the environment.
-    pub fn set_flags(&mut self, flags: EnvironmentFlags) -> &mut EnvironmentBuilder {
+    pub fn set_flags(mut self, flags: EnvironmentFlags) -> EnvironmentBuilder {
         self.flags = flags;
         self
     }
@@ -454,7 +607,7 @@ impl EnvironmentBuilder {
     /// table slot to the current thread until the environment closes or the thread exits. If
     /// `MDB_NOTLS` is in use, `Environment::open_txn` instead ties the slot to the `Transaction`
     /// object until it or the `Environment` object is destroyed.
-    pub fn set_max_readers(&mut self, max_readers: c_uint) -> &mut EnvironmentBuilder {
+    pub fn set_max_readers(mut self, max_readers: c_uint) -> EnvironmentBuilder {
         self.max_readers = Some(max_readers);
         self
     }
@@ -468,7 +621,7 @@ impl EnvironmentBuilder {
     /// Currently a moderate number of slots are cheap but a huge number gets
     /// expensive: 7-120 words per transaction, and every `Transaction::open_db`
     /// does a linear search of the opened slots.
-    pub fn set_max_dbs(&mut self, max_dbs: c_uint) -> &mut EnvironmentBuilder {
+    pub fn set_max_dbs(mut self, max_dbs: c_uint) -> EnvironmentBuilder {
         self.max_dbs = Some(max_dbs);
         self
     }
@@ -483,8 +636,21 @@ impl EnvironmentBuilder {
     ///
     /// Any attempt to set a size smaller than the space already consumed
     /// by the environment will be silently changed to the current size of the used space.
-    pub fn set_map_size(&mut self, map_size: size_t) -> &mut EnvironmentBuilder {
+    pub fn set_map_size(mut self, map_size: size_t) -> EnvironmentBuilder {
         self.map_size = Some(map_size);
+        self
+    }
+
+    /// Set the function that will be called when a database resize happens
+    pub fn set_resize_callback(mut self, callback: Option<Box<dyn Fn(DatabaseResizeInfo)>>) -> EnvironmentBuilder {
+        self.resize_callback = callback;
+        self
+    }
+
+    /// The settings that control when and how resize happens
+    pub fn set_resize_settings(mut self, settings: DatabaseResizeSettings) -> EnvironmentBuilder {
+        settings.validate();
+        self.resize_settings = Some(settings);
         self
     }
 }
@@ -494,10 +660,9 @@ mod test {
 
     extern crate byteorder;
 
-    use self::byteorder::{
-        ByteOrder,
-        LittleEndian,
-    };
+    use std::{collections::BTreeMap, sync::Arc};
+
+    use self::byteorder::{ByteOrder, LittleEndian};
     use tempdir::TempDir;
 
     use flags::*;
@@ -526,7 +691,7 @@ mod test {
             // writable environment
             let env = Environment::new().open(dir.path()).unwrap();
 
-            assert!(env.begin_rw_txn().is_ok());
+            assert!(env.begin_rw_txn(None).is_ok());
             assert!(env.begin_ro_txn().is_ok());
         }
 
@@ -534,7 +699,7 @@ mod test {
             // read-only environment
             let env = Environment::new().set_flags(EnvironmentFlags::READ_ONLY).open(dir.path()).unwrap();
 
-            assert!(env.begin_rw_txn().is_err());
+            assert!(env.begin_rw_txn(None).is_err());
             assert!(env.begin_ro_txn().is_ok());
         }
     }
@@ -602,7 +767,7 @@ mod test {
         for i in 0..64 {
             let mut value = [0u8; 8];
             LittleEndian::write_u64(&mut value, i);
-            let mut tx = env.begin_rw_txn().expect("begin_rw_txn");
+            let mut tx = env.begin_rw_txn(None).expect("begin_rw_txn");
             tx.put(db, &value, &value, WriteFlags::default()).expect("tx.put");
             tx.commit().expect("tx.commit")
         }
@@ -645,11 +810,11 @@ mod test {
         for i in 0..64 {
             let mut value = [0u8; 8];
             LittleEndian::write_u64(&mut value, i);
-            let mut tx = env.begin_rw_txn().expect("begin_rw_txn");
+            let mut tx = env.begin_rw_txn(None).expect("begin_rw_txn");
             tx.put(db, &value, &value, WriteFlags::default()).expect("tx.put");
             tx.commit().expect("tx.commit")
         }
-        let mut tx = env.begin_rw_txn().expect("begin_rw_txn");
+        let mut tx = env.begin_rw_txn(None).expect("begin_rw_txn");
         tx.clear_db(db).expect("clear");
         tx.commit().expect("tx.commit");
 
@@ -661,7 +826,7 @@ mod test {
     #[test]
     fn test_set_map_size() {
         let dir = TempDir::new("test").unwrap();
-        let mut env = Environment::new().open(dir.path()).unwrap();
+        let env = Environment::new().open(dir.path()).unwrap();
 
         let mut info = env.info().unwrap();
         let default_size = info.map_size();
@@ -683,5 +848,315 @@ mod test {
         env.set_map_size(2 * default_size).unwrap();
         info = env.info().unwrap();
         assert_eq!(info.map_size(), 2 * default_size);
+    }
+
+    #[must_use]
+    fn create_random_data_map_with_target_byte_size(
+        required_size: usize,
+        key_max_size: usize,
+        val_max_size: usize,
+    ) -> BTreeMap<Vec<u8>, Vec<u8>> {
+        let mut result = BTreeMap::new();
+
+        let mut total_size = 0;
+
+        while total_size < required_size {
+            let key_size = 1 + rand::random::<usize>() % key_max_size;
+            let key = (0..key_size).map(|_| rand::random::<u8>()).collect::<Vec<_>>();
+            let val_size = 1 + rand::random::<usize>() % val_max_size;
+            let val = (0..val_size).map(|_| rand::random::<u8>()).collect::<Vec<_>>();
+            result.insert(key, val);
+
+            total_size += key_size;
+            total_size += val_size;
+        }
+
+        result
+    }
+
+    #[test]
+    fn test_auto_resize() {
+        let resize_actions = Arc::new(Mutex::new(Vec::new()));
+
+        let resize_actions_for_check = Arc::clone(&resize_actions);
+        let resize_actions = Arc::clone(&resize_actions);
+        let resize_callback = Box::new(move |v| resize_actions.lock().unwrap().push(v));
+
+        let resize_settings = DatabaseResizeSettings {
+            min_resize_step: 1 << 20,
+            max_resize_step: 1 << 21,
+            default_resize_ratio_percentage: 10,
+            resize_trigger_percentage: 0.9,
+        };
+
+        rm_rf::ensure_removed("test_resize1").unwrap();
+        let dir = TempDir::new("test_resize1").unwrap();
+        let initial_map_size = 1 << 20;
+        let env = Environment::new()
+            .set_map_size(initial_map_size)
+            .set_resize_callback(Some(resize_callback))
+            .set_resize_settings(resize_settings.clone())
+            .open(dir.path())
+            .unwrap();
+        let db = env.create_db(None, DatabaseFlags::default()).unwrap();
+
+        let info = env.info().unwrap();
+        let map_size = info.map_size();
+
+        assert_eq!(initial_map_size, map_size);
+
+        // generate random values with a predefined target size that surpasses the current map size
+        let data = create_random_data_map_with_target_byte_size(initial_map_size * 5, 500, 10000);
+
+        // write many key/val values, and while they're being written, expect that database map will grow
+        for (key, val) in &data {
+            let mut rw_tx = env.begin_rw_txn(None).unwrap();
+            rw_tx.put(db, &key, &val, WriteFlags::empty()).unwrap();
+            rw_tx.commit().unwrap();
+        }
+
+        // check resize steps
+        let resize_action_result = resize_actions_for_check.lock().unwrap().clone();
+        assert!(resize_action_result.len() > 0);
+        for act in resize_action_result {
+            assert!(act.old_size < act.new_size);
+            assert!(act.new_size - act.old_size >= resize_settings.min_resize_step as u64);
+            assert!(act.new_size - act.old_size <= resize_settings.max_resize_step as u64);
+        }
+
+        // ensure data is successfully written
+        let ro_tx = env.begin_ro_txn().unwrap();
+        for (key, val) in data {
+            assert_eq!(ro_tx.get(db, &key).unwrap(), val);
+        }
+    }
+
+    #[test]
+    fn test_slow_auto_resize() {
+        let resize_actions = Arc::new(Mutex::new(Vec::new()));
+
+        let resize_actions_for_check = Arc::clone(&resize_actions);
+        let resize_actions = Arc::clone(&resize_actions);
+        let resize_callback = Box::new(move |v| resize_actions.lock().unwrap().push(v));
+
+        let resize_settings = DatabaseResizeSettings {
+            min_resize_step: 1 << 19,
+            max_resize_step: 1 << 21,
+            default_resize_ratio_percentage: 20,
+            resize_trigger_percentage: 0.9,
+        };
+
+        rm_rf::ensure_removed("test_resize1").unwrap();
+        let dir = TempDir::new("test_resize1").unwrap();
+        let initial_map_size = 1 << 19;
+        let env = Environment::new()
+            .set_map_size(initial_map_size)
+            .set_resize_callback(Some(resize_callback))
+            .set_resize_settings(resize_settings.clone())
+            .open(dir.path())
+            .unwrap();
+        let db = env.create_db(None, DatabaseFlags::default()).unwrap();
+
+        let info = env.info().unwrap();
+        let map_size = info.map_size();
+
+        assert_eq!(initial_map_size, map_size);
+
+        // generate small random values with a predefined target size that surpasses the current map size
+        let data = create_random_data_map_with_target_byte_size(initial_map_size, 5, 10);
+
+        // write many key/val values, and while they're being written, expect that database map will grow
+        for (key, val) in &data {
+            let mut rw_tx = env.begin_rw_txn(None).unwrap();
+            rw_tx.put(db, &key, &val, WriteFlags::empty()).unwrap();
+            rw_tx.commit().unwrap();
+        }
+
+        // check resize steps
+        let resize_action_result = resize_actions_for_check.lock().unwrap().clone();
+        assert!(resize_action_result.len() > 0);
+        for act in resize_action_result {
+            assert!(act.old_size < act.new_size);
+            assert!(act.new_size - act.old_size >= resize_settings.min_resize_step as u64);
+            assert!(act.new_size - act.old_size <= resize_settings.max_resize_step as u64);
+            // make sure that we always crossed the provided threshold before resizing
+            assert!(
+                act.occupied_size_before_resize as f32 / act.old_size as f32
+                    >= resize_settings.resize_trigger_percentage,
+                "resize ratio check failed: {} / {} >= {}",
+                act.occupied_size_before_resize as f32,
+                act.old_size as f32,
+                resize_settings.resize_trigger_percentage
+            )
+        }
+
+        // ensure data is successfully written
+        let ro_tx = env.begin_ro_txn().unwrap();
+        for (key, val) in data {
+            assert_eq!(ro_tx.get(db, &key).unwrap(), val);
+        }
+    }
+
+    #[test]
+    fn test_extremely_slow_resize_and_recover_from_mapfull_error() {
+        let resize_actions = Arc::new(Mutex::new(Vec::new()));
+
+        let resize_actions_for_check = Arc::clone(&resize_actions);
+        let resize_actions = Arc::clone(&resize_actions);
+        let resize_callback = Box::new(move |v| resize_actions.lock().unwrap().push(v));
+
+        let resize_settings = DatabaseResizeSettings {
+            min_resize_step: 1 << 15,
+            max_resize_step: 1 << 21,
+            default_resize_ratio_percentage: 1,
+            resize_trigger_percentage: 0.9,
+        };
+
+        rm_rf::ensure_removed("test_resize1").unwrap();
+        let dir = TempDir::new("test_resize1").unwrap();
+        let initial_map_size = 1 << 12;
+        let env = Environment::new()
+            .set_map_size(initial_map_size)
+            .set_resize_callback(Some(resize_callback))
+            .set_resize_settings(resize_settings.clone())
+            .open(dir.path())
+            .unwrap();
+        let db = env.create_db(None, DatabaseFlags::default()).unwrap();
+
+        // generate small random values with a predefined target size that surpasses the current map size
+        let data = create_random_data_map_with_target_byte_size(initial_map_size * 256, 2, 5);
+
+        let mut write_resize_count = 0;
+        let mut commit_resize_count = 0;
+
+        // write many key/val values, and while they're being written, expect that database map will grow
+        for (key, val) in &data {
+            loop {
+                let mut rw_tx = env.begin_rw_txn(None).unwrap();
+                match rw_tx.put(db, &key, &val, WriteFlags::empty()) {
+                    Ok(_) => (), // Success in writing value, let's continue to commit
+                    Err(e) => match e {
+                        Error::MapFull => {
+                            println!("Resizing on write...");
+                            write_resize_count += 1;
+                            drop(rw_tx);
+                            env.do_resize(None).unwrap();
+                            continue; // resized, let's try again in the inner loop
+                        },
+                        _ => panic!("Error on put: {}", e),
+                    },
+                }
+
+                match rw_tx.commit() {
+                    Ok(_) => break, // Success in committing value, we can exit the inner loop
+                    Err(e) => match e {
+                        Error::MapFull => {
+                            println!("Resizing on commit...");
+                            commit_resize_count += 1;
+                            env.do_resize(None).unwrap();
+                        },
+                        _ => panic!("Error on commit: {}", e),
+                    },
+                }
+            }
+        }
+
+        assert!(write_resize_count > 0, "Test failed to trigger write resizes");
+        assert!(commit_resize_count > 0, "Test failed to trigger commit resizes");
+
+        // check resize steps
+        let resize_action_result = resize_actions_for_check.lock().unwrap().clone();
+        assert!(resize_action_result.len() > 0);
+        for act in resize_action_result {
+            assert!(act.old_size < act.new_size);
+            assert!(act.new_size - act.old_size >= resize_settings.min_resize_step as u64);
+            assert!(act.new_size - act.old_size <= resize_settings.max_resize_step as u64);
+        }
+
+        // ensure data is successfully written
+        let ro_tx = env.begin_ro_txn().unwrap();
+        for (key, val) in data {
+            assert_eq!(ro_tx.get(db, &key).unwrap(), val);
+        }
+    }
+
+    #[test]
+    fn test_forced_resize_on_tx_begin() {
+        let resize_actions = Arc::new(Mutex::new(Vec::new()));
+
+        let resize_actions_for_check = Arc::clone(&resize_actions);
+        let resize_actions = Arc::clone(&resize_actions);
+        let resize_callback = Box::new(move |v| resize_actions.lock().unwrap().push(v));
+
+        let resize_settings = DatabaseResizeSettings {
+            min_resize_step: 1 << 20,
+            max_resize_step: 1 << 21,
+            default_resize_ratio_percentage: 50,
+            resize_trigger_percentage: 0.9,
+        };
+
+        rm_rf::ensure_removed("test_resize2").unwrap();
+        let dir = TempDir::new("test_resize2").unwrap();
+        let initial_map_size = 1 << 20;
+        let env = Environment::new()
+            .set_map_size(initial_map_size)
+            .set_resize_callback(Some(resize_callback))
+            .set_resize_settings(resize_settings.clone())
+            .open(dir.path())
+            .unwrap();
+
+        let info = env.info().unwrap();
+        let map_size = info.map_size();
+
+        assert_eq!(initial_map_size, map_size);
+
+        let headroom = 1 << 25;
+        let new_target_size = map_size + headroom;
+
+        // force resize by starting a read/write transaction with specified headroom
+        let rw_tx = env.begin_rw_txn(Some(headroom)).unwrap();
+        rw_tx.abort();
+
+        // ensure resizing went as expected
+        let resize_action_result = resize_actions_for_check.lock().unwrap().clone();
+        assert!(resize_action_result.len() > 0);
+        for act in resize_action_result {
+            assert!(act.old_size < act.new_size);
+            assert!(act.new_size - act.old_size >= resize_settings.min_resize_step as u64);
+            assert!(act.new_size - act.old_size <= resize_settings.max_resize_step as u64);
+        }
+
+        // ensure the new map size is larger than the new target size
+        let info = env.info().unwrap();
+        let new_map_size = info.map_size();
+
+        assert!(new_map_size >= new_target_size, "{} >= {} is false", new_map_size, new_target_size);
+    }
+
+    #[test]
+    fn test_resize_non_integer_page_size() {
+        let resize_settings = DatabaseResizeSettings {
+            min_resize_step: 1 << 17,
+            max_resize_step: 1 << 19,
+            default_resize_ratio_percentage: 10,
+            resize_trigger_percentage: 0.9,
+        };
+
+        rm_rf::ensure_removed("test_resize1").unwrap();
+        let dir = TempDir::new("test_resize1").unwrap();
+        let initial_map_size = 1 << 20;
+        let env = Environment::new()
+            .set_map_size(initial_map_size)
+            .set_resize_settings(resize_settings.clone())
+            .open(dir.path())
+            .unwrap();
+
+        let info = env.info().unwrap();
+        let map_size = info.map_size();
+
+        assert_eq!(initial_map_size, map_size);
+
+        // this should work as the function will round up page sizes
+        env.do_resize(Some((1 << 17) + 7)).unwrap();
     }
 }
