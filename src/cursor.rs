@@ -231,7 +231,7 @@ unsafe fn slice_to_val(slice: Option<&[u8]>) -> ffi::MDB_val {
 }
 
 unsafe fn val_to_slice<'a>(val: ffi::MDB_val) -> &'a [u8] {
-    slice::from_raw_parts(val.mv_data as *const u8, val.mv_size as usize)
+    slice::from_raw_parts(val.mv_data as *const u8, val.mv_size)
 }
 
 /// An iterator over the key/value pairs in an LMDB database.
@@ -296,8 +296,8 @@ impl<'txn, C: Cursor<'txn>> Iterator for Iter<'txn, C> {
     type Item = Result<(&'txn [u8], &'txn [u8])>;
 
     fn next(&mut self) -> Option<Result<(&'txn [u8], &'txn [u8])>> {
-        match self {
-            &mut Iter::Ok {
+        match *self {
+            Iter::Ok {
                 ref cursor,
                 ref mut op,
                 next_op,
@@ -322,8 +322,8 @@ impl<'txn, C: Cursor<'txn>> Iterator for Iter<'txn, C> {
                     }
                 }
             },
-            &mut Iter::Err(err) => Some(Err(err)),
-            &mut Iter::Empty => None,
+            Iter::Err(err) => Some(Err(err)),
+            Iter::Empty => None,
         }
     }
 }

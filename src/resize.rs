@@ -31,6 +31,8 @@ impl Default for DatabaseResizeSettings {
     }
 }
 
+fn assert_unsigned<T: num::Unsigned>(_: T) {}
+
 impl DatabaseResizeSettings {
     const fn make_default() -> Self {
         Self {
@@ -42,11 +44,25 @@ impl DatabaseResizeSettings {
     }
 
     pub fn validate(&self) {
+        // The check below assumes that the type is unsigned
+        assert_unsigned(self.min_resize_step);
+        if self.min_resize_step == 0 {
+            panic!("lmdb: Min step must be positive")
+        }
+
+        // The check below assumes that the type is unsigned
+        assert_unsigned(self.max_resize_step);
+        if self.max_resize_step == 0 {
+            panic!("lmdb: Max step must be positive")
+        }
+
         if self.min_resize_step > self.max_resize_step {
             panic!("lmdb: Min step must be <= max step")
         }
 
-        if self.default_resize_ratio_percentage <= 0 {
+        // The check below assumes that the type is unsigned
+        assert_unsigned(self.default_resize_ratio_percentage);
+        if self.default_resize_ratio_percentage == 0 {
             panic!("lmdb: Resize ratio must be > 0");
         }
 

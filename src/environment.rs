@@ -86,7 +86,7 @@ impl Environment {
     /// transaction.
     ///
     /// The database name may not contain the null character.
-    pub fn open_db<'env>(&'env self, name: Option<&str>) -> Result<Database> {
+    pub fn open_db(&self, name: Option<&str>) -> Result<Database> {
         let mutex = self.dbi_open_mutex.lock();
         let txn = self.begin_ro_txn()?;
         let db = unsafe { txn.open_db(name)? };
@@ -109,7 +109,7 @@ impl Environment {
     ///
     /// This function will fail with `Error::BadRslot` if called by a thread with an open
     /// transaction.
-    pub fn create_db<'env>(&'env self, name: Option<&str>, flags: DatabaseFlags) -> Result<Database> {
+    pub fn create_db(&self, name: Option<&str>, flags: DatabaseFlags) -> Result<Database> {
         let mutex = self.dbi_open_mutex.lock();
         let txn = self.begin_rw_txn(None)?;
         let db = unsafe { txn.create_db(name, flags)? };
@@ -131,7 +131,7 @@ impl Environment {
     }
 
     /// Create a read-only transaction for use with the environment.
-    pub fn begin_ro_txn<'env>(&'env self) -> Result<RoTransaction<'env>> {
+    pub fn begin_ro_txn(&self) -> Result<RoTransaction> {
         RoTransaction::new(self)
     }
 
@@ -159,7 +159,7 @@ impl Environment {
 
     /// Create a read-write transaction for use with the environment. This method will block while
     /// there are any other read-write transactions open on the environment.
-    pub fn begin_rw_txn<'env>(&'env self, headroom: Option<usize>) -> Result<RwTransaction<'env>> {
+    pub fn begin_rw_txn(&self, headroom: Option<usize>) -> Result<RwTransaction> {
         let _lock = self.db_resize_lock.lock().expect("Database resize mutex lock failed");
         self.resize_db_if_necessary(headroom)?;
         RwTransaction::new(self)
@@ -171,16 +171,7 @@ impl Environment {
     /// system may keep it buffered. LMDB always flushes the OS buffers upon commit as well, unless
     /// the environment was opened with `MDB_NOSYNC` or in part `MDB_NOMETASYNC`.
     pub fn sync(&mut self, force: bool) -> Result<()> {
-        unsafe {
-            lmdb_result(ffi::mdb_env_sync(
-                self.env(),
-                if force {
-                    1
-                } else {
-                    0
-                },
-            ))
-        }
+        unsafe { lmdb_result(ffi::mdb_env_sync(self.env(), i32::from(force))) }
     }
 
     /// Return the number of transactions currently running; controlled with TransactionGuard objects
@@ -302,8 +293,9 @@ impl Environment {
     // size_used doesn't include data yet to be committed. This will work only
     // at the beginning of a transaction
     fn map_occupied_size_inner(env_info: &Info, stat: &Stat) -> usize {
-        let size_used = stat.page_size() as usize * env_info.last_pgno();
-        size_used
+        (stat.page_size() as usize).checked_mul(env_info.last_pgno()).unwrap_or_else(|| {
+            panic!("lmdb: Occupied size calculation failed: {} * {}", stat.page_size(), env_info.last_pgno())
+        })
     }
 
     /// Check whether a resize is needed under two conditions:
