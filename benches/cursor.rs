@@ -21,7 +21,7 @@ fn bench_get_seq_iter(b: &mut Bencher) {
     let txn = env.begin_ro_txn().unwrap();
 
     b.iter(|| {
-        let mut cursor = txn.open_ro_cursor(db).unwrap();
+        let cursor = txn.open_ro_cursor(db).unwrap();
         let mut i = 0;
         let mut count = 0u32;
 
@@ -29,12 +29,8 @@ fn bench_get_seq_iter(b: &mut Bencher) {
             i = i + key.len() + data.len();
             count += 1;
         }
-        for (key, data) in cursor.into_iter().filter_map(Result::ok) {
-            i = i + key.len() + data.len();
-            count += 1;
-        }
 
-        fn iterate(cursor: &mut RoCursor) -> Result<()> {
+        fn iterate(cursor: RoCursor) -> Result<()> {
             let mut i = 0;
             for result in cursor.into_iter() {
                 let (key, data) = result?;
@@ -42,7 +38,8 @@ fn bench_get_seq_iter(b: &mut Bencher) {
             }
             Ok(())
         }
-        iterate(&mut cursor).unwrap();
+        let cursor = txn.open_ro_cursor(db).unwrap();
+        iterate(cursor).unwrap();
 
         black_box(i);
         assert_eq!(count, n);
