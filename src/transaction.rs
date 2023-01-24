@@ -14,21 +14,21 @@ use std::{
 
 use ffi;
 
-use cursor::{
+use crate::cursor::{
     RoCursor,
     RwCursor,
 };
-use database::Database;
-use environment::{
+use crate::database::Database;
+use crate::environment::{
     Environment,
     Stat,
 };
-use error::{
+use crate::error::{
     lmdb_result,
     Error,
     Result,
 };
-use flags::{
+use crate::flags::{
     DatabaseFlags,
     EnvironmentFlags,
     WriteFlags,
@@ -485,9 +485,9 @@ mod test {
     use tempdir::TempDir;
 
     use super::*;
-    use cursor::Cursor;
-    use error::*;
-    use flags::*;
+    use crate::cursor::Cursor;
+    use crate::error::*;
+    use crate::flags::*;
 
     #[test]
     fn test_put_get_del() {

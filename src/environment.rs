@@ -31,18 +31,18 @@ use byteorder::{
     NativeEndian,
 };
 
-use cursor::Cursor;
-use database::Database;
-use error::{
+use crate::cursor::Cursor;
+use crate::database::Database;
+use crate::error::{
     lmdb_result,
     Error,
     Result,
 };
-use flags::{
+use crate::flags::{
     DatabaseFlags,
     EnvironmentFlags,
 };
-use transaction::{
+use crate::transaction::{
     RoTransaction,
     RwTransaction,
     Transaction,
@@ -548,7 +548,7 @@ impl Drop for Environment {
         // from a thread where a transaction was executed causes a SIGSEGV.
         // This issue was proven and tested in mintlayer-core under rare circumstances
         std::thread::scope(|s| {
-            s.spawn(|| unsafe { ffi::mdb_env_close(self.env) })
+            s.spawn(move || unsafe { ffi::mdb_env_close(self.env) })
                 .join()
                 .expect("Failed to join lmdb Drop for Environment thread");
         });
@@ -601,7 +601,7 @@ impl EnvironmentBuilder {
             }
             let path = match CString::new(path.as_os_str().as_bytes()) {
                 Ok(path) => path,
-                Err(..) => return Err(::Error::Invalid),
+                Err(..) => return Err(crate::Error::Invalid),
             };
             lmdb_try_with_cleanup!(
                 ffi::mdb_env_open(env, path.as_ptr(), self.flags.bits(), mode),
@@ -698,7 +698,7 @@ mod test {
     };
     use tempdir::TempDir;
 
-    use flags::*;
+    use crate::flags::*;
 
     use super::*;
 

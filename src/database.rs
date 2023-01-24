@@ -4,7 +4,7 @@ use std::ptr;
 
 use ffi;
 
-use error::{
+use crate::error::{
     lmdb_result,
     Result,
 };

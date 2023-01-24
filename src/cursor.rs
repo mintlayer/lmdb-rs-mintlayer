@@ -14,15 +14,15 @@ use libc::{
     EINVAL,
 };
 
-use database::Database;
-use error::{
+use crate::database::Database;
+use crate::error::{
     lmdb_result,
     Error,
     Result,
 };
 use ffi;
-use flags::WriteFlags;
-use transaction::Transaction;
+use crate::flags::WriteFlags;
+use crate::transaction::Transaction;
 
 /// An LMDB cursor.
 pub trait Cursor<'txn>: Sized {
@@ -338,9 +338,9 @@ mod test {
     use tempdir::TempDir;
 
     use super::*;
-    use environment::*;
+    use crate::environment::*;
     use ffi::*;
-    use flags::*;
+    use crate::flags::*;
 
     #[test]
     fn test_get() {

@@ -2,6 +2,7 @@
 name = "lmdb-mintlayer"
 version = "0.16.0"
 license = "Apache-2.0"
+edition = "2021"
 description = "Idiomatic and safe LMDB wrapper."
 homepage = "https://github.com/mozilla/lmdb-rs-mintlayer"
 repository = "https://github.com/mozilla/lmdb-rs-mintlayer.git"
