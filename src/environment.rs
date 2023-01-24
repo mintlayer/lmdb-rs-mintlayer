@@ -919,8 +919,7 @@ mod test {
             resize_trigger_percentage: 0.9,
         };
 
-        rm_rf::ensure_removed("test_resize1").unwrap();
-        let dir = TempDir::new("test_resize1").unwrap();
+        let dir = TempDir::new("test").unwrap();
         let initial_map_size = 1 << 20;
         let env = Environment::new()
             .set_map_size(initial_map_size)
@@ -976,8 +975,7 @@ mod test {
             resize_trigger_percentage: 0.9,
         };
 
-        rm_rf::ensure_removed("test_resize1").unwrap();
-        let dir = TempDir::new("test_resize1").unwrap();
+        let dir = TempDir::new("test").unwrap();
         let initial_map_size = 1 << 19;
         let env = Environment::new()
             .set_map_size(initial_map_size)
@@ -1042,8 +1040,7 @@ mod test {
             resize_trigger_percentage: 0.9,
         };
 
-        rm_rf::ensure_removed("test_resize1").unwrap();
-        let dir = TempDir::new("test_resize1").unwrap();
+        let dir = TempDir::new("test").unwrap();
         let initial_map_size = 1 << 12;
         let env = Environment::new()
             .set_map_size(initial_map_size)
@@ -1125,8 +1122,7 @@ mod test {
             resize_trigger_percentage: 0.9,
         };
 
-        rm_rf::ensure_removed("test_resize2").unwrap();
-        let dir = TempDir::new("test_resize2").unwrap();
+        let dir = TempDir::new("test").unwrap();
         let initial_map_size = 1 << 20;
         let env = Environment::new()
             .set_map_size(initial_map_size)
@@ -1172,8 +1168,7 @@ mod test {
             resize_trigger_percentage: 0.9,
         };
 
-        rm_rf::ensure_removed("test_resize1").unwrap();
-        let dir = TempDir::new("test_resize1").unwrap();
+        let dir = TempDir::new("test").unwrap();
         let initial_map_size = 1 << 20;
         let env = Environment::new()
             .set_map_size(initial_map_size)
