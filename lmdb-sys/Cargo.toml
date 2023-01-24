@@ -3,6 +3,7 @@ name = "lmdb-rkv-sys"
 # NB: When modifying, also modify html_root_url in lib.rs
 version = "0.11.2"
 authors = ["Dan Burkert <dan@danburkert.com>", "Victor Porof <vporof@mozilla.com>"]
+edition = "2021"
 license = "Apache-2.0"
 description = "Rust bindings for liblmdb."
 documentation = "https://docs.rs/lmdb-rkv-sys"

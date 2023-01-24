@@ -1,5 +1,3 @@
-extern crate lmdb_sys;
-
 use lmdb_sys::*;
 
 use std::ffi::{c_void, CString};
@@ -11,7 +9,7 @@ use std::ptr;
 macro_rules! E {
     ($expr:expr) => {{
         match $expr {
-            ::MDB_SUCCESS => (),
+            MDB_SUCCESS => (),
             err_code => assert!(false, "Failed with code {}", err_code),
         }
     }};
@@ -19,7 +17,7 @@ macro_rules! E {
 
 macro_rules! str {
     ($expr:expr) => {
-        ::CString::new($expr).unwrap().as_ptr()
+        CString::new($expr).unwrap().as_ptr()
     };
 }
 
