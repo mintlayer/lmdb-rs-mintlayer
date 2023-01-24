@@ -1,4 +1,5 @@
 use libc::{c_uint, size_t};
+use std::convert::TryInto;
 use std::ffi::CString;
 #[cfg(windows)]
 use std::ffi::OsStr;
@@ -134,17 +135,8 @@ impl Environment {
         RoTransaction::new(self)
     }
 
-    fn float_to_usize(val: f64) -> usize {
-        if val > usize::MAX as f64 {
-            panic!("Failed to convert headroom value to usize (MAX hit); this means either database configuration is wrong or an invariant is broken");
-        } else if val < usize::MIN as f64 {
-            panic!("Failed to convert headroom value to usize (MIN hit); this means either database configuration is wrong or an invariant is broken");
-        }
-        val.round() as usize
-    }
-
-    fn headroom_from_ratio(current_map_size: usize, resize_ratio: f32) -> usize {
-        Self::float_to_usize(current_map_size as f64 * resize_ratio as f64)
+    fn headroom_from_ratio(current_map_size: usize, resize_ratio: u32) -> usize {
+        ((current_map_size as u128 * resize_ratio as u128) / 100).try_into().expect("lmdb: Failed to convert headroom value to usize; this means either database configuration is wrong or an invariant is broken")
     }
 
     fn resize_db_if_necessary(&self, headroom: Option<usize>) -> Result<()> {
@@ -153,8 +145,9 @@ impl Environment {
         let env_info = self.info().expect("Environment info retrieval failed while resizing");
         let initial_map_size = env_info.map_size();
 
-        let required_space = headroom
-            .unwrap_or_else(|| Self::headroom_from_ratio(initial_map_size, resize_settings.default_resize_ratio));
+        let required_space = headroom.unwrap_or_else(|| {
+            Self::headroom_from_ratio(initial_map_size, resize_settings.default_resize_ratio_percentage)
+        });
         while self.needs_resize(headroom)? {
             let new_map_size = self.do_resize(Some(required_space))?;
             if new_map_size >= required_space + initial_map_size {
@@ -349,7 +342,7 @@ impl Environment {
 
         let resize_settings = self.resize_settings.as_ref().unwrap_or(&DEFAULT_RESIZE_SETTINGS);
         let increase_size = increase_size
-            .unwrap_or_else(|| Self::headroom_from_ratio(old_map_size, resize_settings.default_resize_ratio));
+            .unwrap_or_else(|| Self::headroom_from_ratio(old_map_size, resize_settings.default_resize_ratio_percentage));
         let increase_size = increase_size.clamp(resize_settings.min_resize_step, resize_settings.min_resize_step);
 
         let current_occupied_ratio = Self::map_occupied_size_inner(&env_info, &stat);
@@ -871,7 +864,7 @@ mod test {
         let resize_settings = DatabaseResizeSettings {
             min_resize_step: 1 << 20,
             max_resize_step: 1 << 21,
-            default_resize_ratio: 0.1,
+            default_resize_ratio_percentage: 10,
             resize_trigger_percentage: 0.9,
         };
 
@@ -928,7 +921,7 @@ mod test {
         let resize_settings = DatabaseResizeSettings {
             min_resize_step: 1 << 19,
             max_resize_step: 1 << 21,
-            default_resize_ratio: 0.2,
+            default_resize_ratio_percentage: 20,
             resize_trigger_percentage: 0.9,
         };
 
@@ -994,7 +987,7 @@ mod test {
         let resize_settings = DatabaseResizeSettings {
             min_resize_step: 1 << 15,
             max_resize_step: 1 << 21,
-            default_resize_ratio: 0.001,
+            default_resize_ratio_percentage: 1,
             resize_trigger_percentage: 0.9,
         };
 
@@ -1077,7 +1070,7 @@ mod test {
         let resize_settings = DatabaseResizeSettings {
             min_resize_step: 1 << 20,
             max_resize_step: 1 << 21,
-            default_resize_ratio: 0.5,
+            default_resize_ratio_percentage: 50,
             resize_trigger_percentage: 0.9,
         };
 
