@@ -2,11 +2,7 @@ use libc::c_int;
 use std::error::Error as StdError;
 use std::ffi::CStr;
 use std::os::raw::c_char;
-use std::{
-    fmt,
-    result,
-    str,
-};
+use std::{fmt, result, str};
 
 use ffi;
 

@@ -1,25 +1,10 @@
 use std::marker::PhantomData;
-use std::{
-    fmt,
-    mem,
-    ptr,
-    result,
-    slice,
-};
+use std::{fmt, mem, ptr, result, slice};
 
-use libc::{
-    c_uint,
-    c_void,
-    size_t,
-    EINVAL,
-};
+use libc::{c_uint, c_void, size_t, EINVAL};
 
 use database::Database;
-use error::{
-    lmdb_result,
-    Error,
-    Result,
-};
+use error::{lmdb_result, Error, Result};
 use ffi;
 use flags::WriteFlags;
 use transaction::Transaction;
@@ -280,7 +265,12 @@ impl<'txn, C: Cursor<'txn>> Iter<'txn, C> {
     pub fn into_cursor(self) -> Result<C> {
         match self {
             Iter::Err(err) => Err(err),
-            Iter::Ok { cursor, op: _, next_op: _, _marker } => Ok(cursor),
+            Iter::Ok {
+                cursor,
+                op: _,
+                next_op: _,
+                _marker,
+            } => Ok(cursor),
             Iter::Empty => Err(Error::NotFound),
         }
     }
@@ -488,10 +478,7 @@ mod test {
         {
             let cursor = txn.open_ro_cursor(db).unwrap();
             let iter = cursor.into_iter_from(b"key6");
-            assert_eq!(
-                vec!().into_iter().collect::<Vec<(&[u8], &[u8])>>(),
-                iter.collect::<Result<Vec<_>>>().unwrap()
-            );
+            assert_eq!(vec!().into_iter().collect::<Vec<(&[u8], &[u8])>>(), iter.collect::<Result<Vec<_>>>().unwrap());
         }
     }
 
