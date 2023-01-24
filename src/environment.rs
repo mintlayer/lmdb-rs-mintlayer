@@ -134,13 +134,18 @@ impl Environment {
         RoTransaction::new(self)
     }
 
+    fn headroom_from_ratio(current_map_size: usize, resize_ratio: f32) -> usize {
+        (current_map_size as f64 * resize_ratio as f64) as usize
+    }
+
     fn resize_db_if_necessary(&self, headroom: Option<usize>) -> Result<()> {
         let resize_settings = self.resize_settings.as_ref().unwrap_or(&DEFAULT_RESIZE_SETTINGS);
 
         let env_info = self.info().expect("Environment info retrieval failed while resizing");
         let initial_map_size = env_info.map_size();
 
-        let required_space = headroom.unwrap_or(resize_settings.default_resize_step);
+        let required_space = headroom
+            .unwrap_or_else(|| Self::headroom_from_ratio(initial_map_size, resize_settings.default_resize_ratio));
         while self.needs_resize(headroom)? {
             let new_map_size = self.do_resize(Some(required_space))?;
             if new_map_size >= required_space + initial_map_size {
@@ -328,20 +333,28 @@ impl Environment {
     /// Keep in mind that a single resize step cannot be larger than 1 << 31, due to usize limitations
     /// this is due to the FFI using usize while lmdb uses mdb_size_t, which is always u64
     pub fn do_resize(&self, increase_size: Option<usize>) -> Result<usize> {
-        let resize_settings = self.resize_settings.as_ref().unwrap_or(&DEFAULT_RESIZE_SETTINGS);
-        let increase_size = increase_size.unwrap_or(resize_settings.default_resize_step);
-        let increase_size = increase_size.clamp(resize_settings.min_resize_step, resize_settings.min_resize_step);
-
         let stat = self.stat()?;
         let env_info = self.info()?;
 
         let old_map_size = env_info.map_size();
+
+        let resize_settings = self.resize_settings.as_ref().unwrap_or(&DEFAULT_RESIZE_SETTINGS);
+        let increase_size = increase_size
+            .unwrap_or_else(|| Self::headroom_from_ratio(old_map_size, resize_settings.default_resize_ratio));
+        let increase_size = increase_size.clamp(resize_settings.min_resize_step, resize_settings.min_resize_step);
 
         let current_occupied_ratio = Self::map_occupied_size_inner(&env_info, &stat);
 
         // calculate new map size, and ensure it's an integer of OS page size
         let new_map_size = old_map_size.checked_add(increase_size).expect("LMDB resize size addition failed");
         let new_map_size = new_map_size + new_map_size % stat.page_size() as usize;
+
+        // To prevent dead-locks (where we keep retrying to resize to the same size), we ensure that we're at least increasing the size by a page's size
+        let new_map_size = if new_map_size == old_map_size {
+            new_map_size + stat.page_size() as usize
+        } else {
+            new_map_size
+        };
 
         // Check available disk space
         let free_space = fs4::free_space(&self.db_path).expect("Failed to get remaining disk space for db resize");
@@ -355,6 +368,7 @@ impl Environment {
             final_increase
         );
 
+        // There cannot be any transactions running while resizing
         let _tx_blocker = ScopedTransactionBlocker::new(self);
         TransactionGuard::wait_for_transactions_to_finish(self);
 
@@ -848,7 +862,7 @@ mod test {
         let resize_settings = DatabaseResizeSettings {
             min_resize_step: 1 << 20,
             max_resize_step: 1 << 21,
-            default_resize_step: 1 << 20,
+            default_resize_ratio: 0.1,
             resize_trigger_percentage: 0.9,
         };
 
@@ -905,7 +919,7 @@ mod test {
         let resize_settings = DatabaseResizeSettings {
             min_resize_step: 1 << 19,
             max_resize_step: 1 << 21,
-            default_resize_step: 1 << 19,
+            default_resize_ratio: 0.2,
             resize_trigger_percentage: 0.9,
         };
 
@@ -971,7 +985,7 @@ mod test {
         let resize_settings = DatabaseResizeSettings {
             min_resize_step: 1 << 15,
             max_resize_step: 1 << 21,
-            default_resize_step: 1 << 15,
+            default_resize_ratio: 0.001,
             resize_trigger_percentage: 0.9,
         };
 
@@ -1054,7 +1068,7 @@ mod test {
         let resize_settings = DatabaseResizeSettings {
             min_resize_step: 1 << 20,
             max_resize_step: 1 << 21,
-            default_resize_step: 1 << 20,
+            default_resize_ratio: 0.5,
             resize_trigger_percentage: 0.9,
         };
 
