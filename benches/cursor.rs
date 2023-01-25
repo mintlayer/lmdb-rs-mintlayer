@@ -1,9 +1,8 @@
-#![feature(test)]
-
 use lmdb_sys as ffi;
-extern crate test;
 
 mod utils;
+
+use criterion::{Bencher, criterion_group, criterion_main, black_box, Criterion};
 
 use ffi::*;
 use lmdb::{
@@ -13,14 +12,9 @@ use lmdb::{
     Transaction,
 };
 use std::ptr;
-use test::{
-    black_box,
-    Bencher,
-};
 use utils::*;
 
 /// Benchmark of iterator sequential read performance.
-#[bench]
 fn bench_get_seq_iter(b: &mut Bencher) {
     let n = 100;
     let (_dir, env) = setup_bench_db(n);
@@ -54,7 +48,6 @@ fn bench_get_seq_iter(b: &mut Bencher) {
 }
 
 /// Benchmark of cursor sequential read performance.
-#[bench]
 fn bench_get_seq_cursor(b: &mut Bencher) {
     let n = 100;
     let (_dir, env) = setup_bench_db(n);
@@ -77,7 +70,6 @@ fn bench_get_seq_cursor(b: &mut Bencher) {
 }
 
 /// Benchmark of raw LMDB sequential read performance (control).
-#[bench]
 fn bench_get_seq_raw(b: &mut Bencher) {
     let n = 100;
     let (_dir, env) = setup_bench_db(n);
@@ -112,3 +104,12 @@ fn bench_get_seq_raw(b: &mut Bencher) {
         mdb_cursor_close(cursor);
     });
 }
+
+fn criterion_benchmark(c: &mut Criterion) {
+    c.bench_function("bench_get_seq_iter", bench_get_seq_iter);
+    c.bench_function("bench_get_seq_cursor", bench_get_seq_cursor);
+    c.bench_function("bench_get_seq_raw", bench_get_seq_raw);
+}
+
+criterion_group!(benches, criterion_benchmark);
+criterion_main!(benches);
