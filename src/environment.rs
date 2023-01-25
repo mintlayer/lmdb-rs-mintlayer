@@ -1,62 +1,27 @@
-use libc::{
-    c_uint,
-    size_t,
-};
+use libc::{c_uint, size_t};
 use std::convert::TryInto;
 use std::ffi::CString;
 #[cfg(windows)]
 use std::ffi::OsStr;
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
-use std::path::{
-    Path,
-    PathBuf,
-};
-use std::sync::atomic::{
-    AtomicBool,
-    AtomicU32,
-};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU32};
 use std::sync::Mutex;
-use std::{
-    fmt,
-    mem,
-    ptr,
-    result,
-};
+use std::{fmt, mem, ptr, result};
 
 use lmdb_sys as ffi;
 
-use byteorder::{
-    ByteOrder,
-    NativeEndian,
-};
+use byteorder::{ByteOrder, NativeEndian};
 
 use crate::cursor::Cursor;
 use crate::database::Database;
-use crate::error::{
-    lmdb_result,
-    Error,
-    Result,
-};
-use crate::flags::{
-    DatabaseFlags,
-    EnvironmentFlags,
-};
-use crate::transaction::{
-    RoTransaction,
-    RwTransaction,
-    Transaction,
-};
+use crate::error::{lmdb_result, Error, Result};
+use crate::flags::{DatabaseFlags, EnvironmentFlags};
+use crate::transaction::{RoTransaction, RwTransaction, Transaction};
 
-use crate::resize::{
-    DatabaseResizeInfo,
-    DatabaseResizeSettings,
-    DEFAULT_RESIZE_SETTINGS,
-};
-use crate::transaction_guard::{
-    ScopedTransactionBlocker,
-    TransactionGuard,
-};
+use crate::resize::{DatabaseResizeInfo, DatabaseResizeSettings, DEFAULT_RESIZE_SETTINGS};
+use crate::transaction_guard::{ScopedTransactionBlocker, TransactionGuard};
 
 #[cfg(windows)]
 /// Adding a 'missing' trait from windows OsStrExt
@@ -684,15 +649,9 @@ impl EnvironmentBuilder {
 
 #[cfg(test)]
 mod test {
-    use std::{
-        collections::BTreeMap,
-        sync::Arc,
-    };
+    use std::{collections::BTreeMap, sync::Arc};
 
-    use byteorder::{
-        ByteOrder,
-        LittleEndian,
-    };
+    use byteorder::{ByteOrder, LittleEndian};
     use tempdir::TempDir;
 
     use crate::flags::*;

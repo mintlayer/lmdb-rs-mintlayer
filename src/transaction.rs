@@ -1,38 +1,14 @@
-use libc::{
-    c_uint,
-    c_void,
-    size_t,
-};
+use libc::{c_uint, c_void, size_t};
 use std::marker::PhantomData;
-use std::{
-    fmt,
-    mem,
-    ptr,
-    result,
-    slice,
-};
+use std::{fmt, mem, ptr, result, slice};
 
 use lmdb_sys as ffi;
 
-use crate::cursor::{
-    RoCursor,
-    RwCursor,
-};
+use crate::cursor::{RoCursor, RwCursor};
 use crate::database::Database;
-use crate::environment::{
-    Environment,
-    Stat,
-};
-use crate::error::{
-    lmdb_result,
-    Error,
-    Result,
-};
-use crate::flags::{
-    DatabaseFlags,
-    EnvironmentFlags,
-    WriteFlags,
-};
+use crate::environment::{Environment, Stat};
+use crate::error::{lmdb_result, Error, Result};
+use crate::flags::{DatabaseFlags, EnvironmentFlags, WriteFlags};
 
 use crate::transaction::private::TransactionSealedProps;
 use crate::transaction_guard::TransactionGuard;
@@ -473,14 +449,8 @@ impl<'env> private::TransactionSealedProps for RwTransaction<'env> {
 mod test {
 
     use std::io::Write;
-    use std::sync::{
-        Arc,
-        Barrier,
-    };
-    use std::thread::{
-        self,
-        JoinHandle,
-    };
+    use std::sync::{Arc, Barrier};
+    use std::thread::{self, JoinHandle};
 
     use tempdir::TempDir;
 

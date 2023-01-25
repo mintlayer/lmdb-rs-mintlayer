@@ -4,10 +4,7 @@ use std::ptr;
 
 use lmdb_sys as ffi;
 
-use crate::error::{
-    lmdb_result,
-    Result,
-};
+use crate::error::{lmdb_result, Result};
 
 /// A handle to an individual database in an environment.
 ///

@@ -1,4 +1,4 @@
-use criterion::{Bencher, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{black_box, criterion_group, criterion_main, Bencher, Criterion};
 
 use lmdb_sys as ffi;
 
@@ -6,14 +6,8 @@ mod utils;
 
 use ffi::*;
 use libc::size_t;
-use lmdb::{
-    Transaction,
-    WriteFlags,
-};
-use rand::{
-    seq::SliceRandom,
-    SeedableRng,
-};
+use lmdb::{Transaction, WriteFlags};
+use rand::{seq::SliceRandom, SeedableRng};
 use std::ptr;
 use utils::*;
 
