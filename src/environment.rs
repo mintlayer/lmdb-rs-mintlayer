@@ -127,7 +127,7 @@ impl Environment {
         unsafe {
             lmdb_result(ffi::mdb_dbi_flags(txn.txn(), db.dbi(), &mut flags))?;
         }
-        Ok(DatabaseFlags::from_bits(flags).unwrap())
+        Ok(DatabaseFlags::from_bits(flags).expect("lmdb: Database Flags that are expected to work, failed"))
     }
 
     /// Create a read-only transaction for use with the environment.
@@ -905,7 +905,7 @@ mod test {
 
         // check resize steps
         let resize_action_result = resize_actions_for_check.lock().unwrap().clone();
-        assert!(resize_action_result.len() > 0);
+        assert!(!resize_action_result.is_empty());
         for act in resize_action_result {
             assert!(act.old_size < act.new_size);
             assert!(act.new_size - act.old_size >= resize_settings.min_resize_step as u64);
@@ -961,7 +961,7 @@ mod test {
 
         // check resize steps
         let resize_action_result = resize_actions_for_check.lock().unwrap().clone();
-        assert!(resize_action_result.len() > 0);
+        assert!(!resize_action_result.is_empty());
         for act in resize_action_result {
             assert!(act.old_size < act.new_size);
             assert!(act.new_size - act.old_size >= resize_settings.min_resize_step as u64);
@@ -1052,7 +1052,7 @@ mod test {
 
         // check resize steps
         let resize_action_result = resize_actions_for_check.lock().unwrap().clone();
-        assert!(resize_action_result.len() > 0);
+        assert!(!resize_action_result.is_empty());
         for act in resize_action_result {
             assert!(act.old_size < act.new_size);
             assert!(act.new_size - act.old_size >= resize_settings.min_resize_step as u64);
@@ -1104,7 +1104,7 @@ mod test {
 
         // ensure resizing went as expected
         let resize_action_result = resize_actions_for_check.lock().unwrap().clone();
-        assert!(resize_action_result.len() > 0);
+        assert!(!resize_action_result.is_empty());
         for act in resize_action_result {
             assert!(act.old_size < act.new_size);
             assert!(act.new_size - act.old_size >= resize_settings.min_resize_step as u64);
@@ -1131,7 +1131,7 @@ mod test {
         let initial_map_size = 1 << 20;
         let env = Environment::new()
             .set_map_size(initial_map_size)
-            .set_resize_settings(resize_settings.clone())
+            .set_resize_settings(resize_settings)
             .open(dir.path())
             .unwrap();
 

@@ -55,7 +55,7 @@ fn bench_get_seq_cursor(b: &mut Bencher) {
         let mut count = 0u32;
 
         while let Ok((key_opt, val)) = cursor.get(None, None, MDB_NEXT) {
-            i += key_opt.map(|key| key.len()).unwrap_or(0) + val.len();
+            i += key_opt.map_or(0, |key| key.len()) + val.len();
             count += 1;
         }
 

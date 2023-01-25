@@ -43,7 +43,9 @@ fn main() {
     #[cfg(feature = "bindgen")]
     generate::generate();
 
-    let mut lmdb = PathBuf::from(&env::var("CARGO_MANIFEST_DIR").unwrap());
+    let mut lmdb = PathBuf::from(
+        &env::var("CARGO_MANIFEST_DIR").expect("lmdb: Path from str failed. Invariant broken."),
+    );
     lmdb.push("lmdb");
     lmdb.push("libraries");
     lmdb.push("liblmdb");
