@@ -2,13 +2,13 @@ use libc::{c_uint, c_void, size_t};
 use std::marker::PhantomData;
 use std::{fmt, mem, ptr, result, slice};
 
-use ffi;
+use lmdb_sys as ffi;
 
-use cursor::{RoCursor, RwCursor};
-use database::Database;
-use environment::{Environment, Stat};
-use error::{lmdb_result, Error, Result};
-use flags::{DatabaseFlags, EnvironmentFlags, WriteFlags};
+use crate::cursor::{RoCursor, RwCursor};
+use crate::database::Database;
+use crate::environment::{Environment, Stat};
+use crate::error::{lmdb_result, Error, Result};
+use crate::flags::{DatabaseFlags, EnvironmentFlags, WriteFlags};
 
 use crate::transaction::private::TransactionSealedProps;
 use crate::transaction_guard::TransactionGuard;
@@ -91,14 +91,14 @@ pub trait Transaction: Sized + private::TransactionSealedProps {
         };
         unsafe {
             match ffi::mdb_get(self.txn(), database.dbi(), &mut key_val, &mut data_val) {
-                ffi::MDB_SUCCESS => Ok(slice::from_raw_parts(data_val.mv_data as *const u8, data_val.mv_size as usize)),
+                ffi::MDB_SUCCESS => Ok(slice::from_raw_parts(data_val.mv_data as *const u8, data_val.mv_size)),
                 err_code => Err(Error::from_err_code(err_code)),
             }
         }
     }
 
     /// Open a new read-only cursor on the given database.
-    fn open_ro_cursor<'txn>(&'txn self, db: Database) -> Result<RoCursor<'txn>> {
+    fn open_ro_cursor(&self, db: Database) -> Result<RoCursor> {
         RoCursor::new(self, db)
     }
 
@@ -199,7 +199,7 @@ impl<'env> private::TransactionSealedProps for RoTransaction<'env> {
     }
 
     fn is_nullified(&self) -> bool {
-        self.txn == std::ptr::null_mut()
+        self.txn.is_null()
     }
 }
 
@@ -305,7 +305,7 @@ impl<'env> RwTransaction<'env> {
     }
 
     /// Opens a new read-write cursor on the given database and transaction.
-    pub fn open_rw_cursor<'txn>(&'txn mut self, db: Database) -> Result<RwCursor<'txn>> {
+    pub fn open_rw_cursor(&mut self, db: Database) -> Result<RwCursor> {
         RwCursor::new(self, db)
     }
 
@@ -363,7 +363,7 @@ impl<'env> RwTransaction<'env> {
                 &mut data_val,
                 flags.bits() | ffi::MDB_RESERVE,
             ))?;
-            Ok(slice::from_raw_parts_mut(data_val.mv_data as *mut u8, data_val.mv_size as usize))
+            Ok(slice::from_raw_parts_mut(data_val.mv_data as *mut u8, data_val.mv_size))
         }
     }
 
@@ -414,7 +414,7 @@ impl<'env> RwTransaction<'env> {
     }
 
     /// Begins a new nested transaction inside of this transaction.
-    pub fn begin_nested_txn<'txn>(&'txn mut self) -> Result<RwTransaction<'txn>> {
+    pub fn begin_nested_txn(&mut self) -> Result<RwTransaction> {
         let mut nested: *mut ffi::MDB_txn = ptr::null_mut();
         unsafe {
             let env: *mut ffi::MDB_env = ffi::mdb_txn_env(self.txn());
@@ -455,9 +455,9 @@ mod test {
     use tempdir::TempDir;
 
     use super::*;
-    use cursor::Cursor;
-    use error::*;
-    use flags::*;
+    use crate::cursor::Cursor;
+    use crate::error::*;
+    use crate::flags::*;
 
     #[test]
     fn test_put_get_del() {

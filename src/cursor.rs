@@ -1,28 +1,13 @@
 use std::marker::PhantomData;
-use std::{
-    fmt,
-    mem,
-    ptr,
-    result,
-    slice,
-};
+use std::{fmt, mem, ptr, result, slice};
 
-use libc::{
-    c_uint,
-    c_void,
-    size_t,
-    EINVAL,
-};
+use libc::{c_uint, c_void, size_t, EINVAL};
 
-use database::Database;
-use error::{
-    lmdb_result,
-    Error,
-    Result,
-};
-use ffi;
-use flags::WriteFlags;
-use transaction::Transaction;
+use crate::database::Database;
+use crate::error::{lmdb_result, Error, Result};
+use crate::flags::WriteFlags;
+use crate::transaction::Transaction;
+use lmdb_sys as ffi;
 
 /// An LMDB cursor.
 pub trait Cursor<'txn>: Sized {
@@ -231,7 +216,7 @@ unsafe fn slice_to_val(slice: Option<&[u8]>) -> ffi::MDB_val {
 }
 
 unsafe fn val_to_slice<'a>(val: ffi::MDB_val) -> &'a [u8] {
-    slice::from_raw_parts(val.mv_data as *const u8, val.mv_size as usize)
+    slice::from_raw_parts(val.mv_data as *const u8, val.mv_size)
 }
 
 /// An iterator over the key/value pairs in an LMDB database.
@@ -280,7 +265,12 @@ impl<'txn, C: Cursor<'txn>> Iter<'txn, C> {
     pub fn into_cursor(self) -> Result<C> {
         match self {
             Iter::Err(err) => Err(err),
-            Iter::Ok { cursor, op: _, next_op: _, _marker } => Ok(cursor),
+            Iter::Ok {
+                cursor,
+                op: _,
+                next_op: _,
+                _marker,
+            } => Ok(cursor),
             Iter::Empty => Err(Error::NotFound),
         }
     }
@@ -296,8 +286,8 @@ impl<'txn, C: Cursor<'txn>> Iterator for Iter<'txn, C> {
     type Item = Result<(&'txn [u8], &'txn [u8])>;
 
     fn next(&mut self) -> Option<Result<(&'txn [u8], &'txn [u8])>> {
-        match self {
-            &mut Iter::Ok {
+        match *self {
+            Iter::Ok {
                 ref cursor,
                 ref mut op,
                 next_op,
@@ -322,8 +312,8 @@ impl<'txn, C: Cursor<'txn>> Iterator for Iter<'txn, C> {
                     }
                 }
             },
-            &mut Iter::Err(err) => Some(Err(err)),
-            &mut Iter::Empty => None,
+            Iter::Err(err) => Some(Err(err)),
+            Iter::Empty => None,
         }
     }
 }
@@ -333,9 +323,9 @@ mod test {
     use tempdir::TempDir;
 
     use super::*;
-    use environment::*;
+    use crate::environment::*;
+    use crate::flags::*;
     use ffi::*;
-    use flags::*;
 
     #[test]
     fn test_get() {
@@ -488,10 +478,7 @@ mod test {
         {
             let cursor = txn.open_ro_cursor(db).unwrap();
             let iter = cursor.into_iter_from(b"key6");
-            assert_eq!(
-                vec!().into_iter().collect::<Vec<(&[u8], &[u8])>>(),
-                iter.collect::<Result<Vec<_>>>().unwrap()
-            );
+            assert_eq!(vec!().into_iter().collect::<Vec<(&[u8], &[u8])>>(), iter.collect::<Result<Vec<_>>>().unwrap());
         }
     }
 

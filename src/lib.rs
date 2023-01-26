@@ -3,45 +3,21 @@
 
 #![deny(missing_docs)]
 
-extern crate byteorder;
-extern crate libc;
-extern crate lmdb_sys as ffi;
-
-#[cfg(test)]
-extern crate tempdir;
 #[macro_use]
 extern crate bitflags;
 
-pub use cursor::{
-    Cursor,
-    Iter,
-    RoCursor,
-    RwCursor,
-};
+pub use cursor::{Cursor, Iter, RoCursor, RwCursor};
 pub use database::Database;
-pub use environment::{
-    Environment,
-    EnvironmentBuilder,
-    Info,
-    Stat,
-};
-pub use error::{
-    Error,
-    Result,
-};
+pub use environment::{Environment, EnvironmentBuilder, Info, Stat};
+pub use error::{Error, Result};
 pub use flags::*;
-pub use transaction::{
-    InactiveTransaction,
-    RoTransaction,
-    RwTransaction,
-    Transaction,
-};
+pub use transaction::{InactiveTransaction, RoTransaction, RwTransaction, Transaction};
 
 macro_rules! lmdb_try {
     ($expr:expr) => {{
         match $expr {
-            ::ffi::MDB_SUCCESS => (),
-            err_code => return Err(::Error::from_err_code(err_code)),
+            ffi::MDB_SUCCESS => (),
+            err_code => return Err(crate::Error::from_err_code(err_code)),
         }
     }};
 }
@@ -49,10 +25,10 @@ macro_rules! lmdb_try {
 macro_rules! lmdb_try_with_cleanup {
     ($expr:expr, $cleanup:expr) => {{
         match $expr {
-            ::ffi::MDB_SUCCESS => (),
+            ffi::MDB_SUCCESS => (),
             err_code => {
                 let _ = $cleanup;
-                return Err(::Error::from_err_code(err_code));
+                return Err(crate::Error::from_err_code(err_code));
             },
         }
     }};
@@ -66,17 +42,14 @@ mod database;
 mod environment;
 mod error;
 mod flags;
+mod resize;
 mod transaction;
 mod transaction_guard;
-mod resize;
 
 #[cfg(test)]
 mod test_utils {
 
-    use byteorder::{
-        ByteOrder,
-        LittleEndian,
-    };
+    use byteorder::{ByteOrder, LittleEndian};
     use tempdir::TempDir;
 
     use super::*;
@@ -90,10 +63,7 @@ mod test_utils {
 
         let dir = TempDir::new("test").unwrap();
 
-        let env = Environment::new().
-        set_max_dbs(2).
-        set_map_size(1_000_000).
-        open(dir.path()).expect("open lmdb env");
+        let env = Environment::new().set_max_dbs(2).set_map_size(1_000_000).open(dir.path()).expect("open lmdb env");
 
         let index = env.create_db(None, DatabaseFlags::DUP_SORT).expect("open index db");
 

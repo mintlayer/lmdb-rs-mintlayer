@@ -1,5 +1,3 @@
-extern crate lmdb_sys;
-
 use lmdb_sys::*;
 
 use std::ffi::{c_void, CString};
@@ -11,7 +9,7 @@ use std::ptr;
 macro_rules! E {
     ($expr:expr) => {{
         match $expr {
-            ::MDB_SUCCESS => (),
+            MDB_SUCCESS => (),
             err_code => assert!(false, "Failed with code {}", err_code),
         }
     }};
@@ -19,7 +17,7 @@ macro_rules! E {
 
 macro_rules! str {
     ($expr:expr) => {
-        ::CString::new($expr).unwrap().as_ptr()
+        CString::new($expr).unwrap().as_ptr()
     };
 }
 
@@ -65,7 +63,7 @@ fn test_simple(env_path: &str) {
     unsafe {
         E!(mdb_env_create(&mut env));
         E!(mdb_env_set_maxdbs(env, 2));
-        E!(mdb_env_open(env, str!(env_path), 0, 0664));
+        E!(mdb_env_open(env, str!(env_path), 0, 664));
 
         E!(mdb_txn_begin(env, ptr::null_mut(), 0, &mut txn));
         E!(mdb_dbi_open(txn, str!("subdb"), MDB_CREATE, &mut dbi));

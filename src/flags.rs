@@ -1,6 +1,6 @@
 use libc::c_uint;
 
-use ffi::*;
+use lmdb_sys::*;
 
 bitflags! {
     #[doc="Environment options."]

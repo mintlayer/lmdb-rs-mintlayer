@@ -10,15 +10,15 @@ use std::sync::atomic::{AtomicBool, AtomicU32};
 use std::sync::Mutex;
 use std::{fmt, mem, ptr, result};
 
-use ffi;
+use lmdb_sys as ffi;
 
 use byteorder::{ByteOrder, NativeEndian};
 
-use cursor::Cursor;
-use database::Database;
-use error::{lmdb_result, Error, Result};
-use flags::{DatabaseFlags, EnvironmentFlags};
-use transaction::{RoTransaction, RwTransaction, Transaction};
+use crate::cursor::Cursor;
+use crate::database::Database;
+use crate::error::{lmdb_result, Error, Result};
+use crate::flags::{DatabaseFlags, EnvironmentFlags};
+use crate::transaction::{RoTransaction, RwTransaction, Transaction};
 
 use crate::resize::{DatabaseResizeInfo, DatabaseResizeSettings, DEFAULT_RESIZE_SETTINGS};
 use crate::transaction_guard::{ScopedTransactionBlocker, TransactionGuard};
@@ -86,7 +86,7 @@ impl Environment {
     /// transaction.
     ///
     /// The database name may not contain the null character.
-    pub fn open_db<'env>(&'env self, name: Option<&str>) -> Result<Database> {
+    pub fn open_db(&self, name: Option<&str>) -> Result<Database> {
         let mutex = self.dbi_open_mutex.lock();
         let txn = self.begin_ro_txn()?;
         let db = unsafe { txn.open_db(name)? };
@@ -109,7 +109,7 @@ impl Environment {
     ///
     /// This function will fail with `Error::BadRslot` if called by a thread with an open
     /// transaction.
-    pub fn create_db<'env>(&'env self, name: Option<&str>, flags: DatabaseFlags) -> Result<Database> {
+    pub fn create_db(&self, name: Option<&str>, flags: DatabaseFlags) -> Result<Database> {
         let mutex = self.dbi_open_mutex.lock();
         let txn = self.begin_rw_txn(None)?;
         let db = unsafe { txn.create_db(name, flags)? };
@@ -127,11 +127,11 @@ impl Environment {
         unsafe {
             lmdb_result(ffi::mdb_dbi_flags(txn.txn(), db.dbi(), &mut flags))?;
         }
-        Ok(DatabaseFlags::from_bits(flags).unwrap())
+        Ok(DatabaseFlags::from_bits(flags).expect("lmdb: Database Flags that are expected to work, failed"))
     }
 
     /// Create a read-only transaction for use with the environment.
-    pub fn begin_ro_txn<'env>(&'env self) -> Result<RoTransaction<'env>> {
+    pub fn begin_ro_txn(&self) -> Result<RoTransaction> {
         RoTransaction::new(self)
     }
 
@@ -159,7 +159,7 @@ impl Environment {
 
     /// Create a read-write transaction for use with the environment. This method will block while
     /// there are any other read-write transactions open on the environment.
-    pub fn begin_rw_txn<'env>(&'env self, headroom: Option<usize>) -> Result<RwTransaction<'env>> {
+    pub fn begin_rw_txn(&self, headroom: Option<usize>) -> Result<RwTransaction> {
         let _lock = self.db_resize_lock.lock().expect("Database resize mutex lock failed");
         self.resize_db_if_necessary(headroom)?;
         RwTransaction::new(self)
@@ -171,16 +171,7 @@ impl Environment {
     /// system may keep it buffered. LMDB always flushes the OS buffers upon commit as well, unless
     /// the environment was opened with `MDB_NOSYNC` or in part `MDB_NOMETASYNC`.
     pub fn sync(&mut self, force: bool) -> Result<()> {
-        unsafe {
-            lmdb_result(ffi::mdb_env_sync(
-                self.env(),
-                if force {
-                    1
-                } else {
-                    0
-                },
-            ))
-        }
+        unsafe { lmdb_result(ffi::mdb_env_sync(self.env(), i32::from(force))) }
     }
 
     /// Return the number of transactions currently running; controlled with TransactionGuard objects
@@ -302,8 +293,9 @@ impl Environment {
     // size_used doesn't include data yet to be committed. This will work only
     // at the beginning of a transaction
     fn map_occupied_size_inner(env_info: &Info, stat: &Stat) -> usize {
-        let size_used = stat.page_size() as usize * env_info.last_pgno();
-        size_used
+        (stat.page_size() as usize).checked_mul(env_info.last_pgno()).unwrap_or_else(|| {
+            panic!("lmdb: Occupied size calculation failed: {} * {}", stat.page_size(), env_info.last_pgno())
+        })
     }
 
     /// Check whether a resize is needed under two conditions:
@@ -521,7 +513,7 @@ impl Drop for Environment {
         // from a thread where a transaction was executed causes a SIGSEGV.
         // This issue was proven and tested in mintlayer-core under rare circumstances
         std::thread::scope(|s| {
-            s.spawn(|| unsafe { ffi::mdb_env_close(self.env) })
+            s.spawn(move || unsafe { ffi::mdb_env_close(self.env) })
                 .join()
                 .expect("Failed to join lmdb Drop for Environment thread");
         });
@@ -574,7 +566,7 @@ impl EnvironmentBuilder {
             }
             let path = match CString::new(path.as_os_str().as_bytes()) {
                 Ok(path) => path,
-                Err(..) => return Err(::Error::Invalid),
+                Err(..) => return Err(crate::Error::Invalid),
             };
             lmdb_try_with_cleanup!(
                 ffi::mdb_env_open(env, path.as_ptr(), self.flags.bits(), mode),
@@ -657,15 +649,12 @@ impl EnvironmentBuilder {
 
 #[cfg(test)]
 mod test {
-
-    extern crate byteorder;
-
     use std::{collections::BTreeMap, sync::Arc};
 
-    use self::byteorder::{ByteOrder, LittleEndian};
+    use byteorder::{ByteOrder, LittleEndian};
     use tempdir::TempDir;
 
-    use flags::*;
+    use crate::flags::*;
 
     use super::*;
 
@@ -889,8 +878,7 @@ mod test {
             resize_trigger_percentage: 0.9,
         };
 
-        rm_rf::ensure_removed("test_resize1").unwrap();
-        let dir = TempDir::new("test_resize1").unwrap();
+        let dir = TempDir::new("test").unwrap();
         let initial_map_size = 1 << 20;
         let env = Environment::new()
             .set_map_size(initial_map_size)
@@ -917,7 +905,7 @@ mod test {
 
         // check resize steps
         let resize_action_result = resize_actions_for_check.lock().unwrap().clone();
-        assert!(resize_action_result.len() > 0);
+        assert!(!resize_action_result.is_empty());
         for act in resize_action_result {
             assert!(act.old_size < act.new_size);
             assert!(act.new_size - act.old_size >= resize_settings.min_resize_step as u64);
@@ -946,8 +934,7 @@ mod test {
             resize_trigger_percentage: 0.9,
         };
 
-        rm_rf::ensure_removed("test_resize1").unwrap();
-        let dir = TempDir::new("test_resize1").unwrap();
+        let dir = TempDir::new("test").unwrap();
         let initial_map_size = 1 << 19;
         let env = Environment::new()
             .set_map_size(initial_map_size)
@@ -974,7 +961,7 @@ mod test {
 
         // check resize steps
         let resize_action_result = resize_actions_for_check.lock().unwrap().clone();
-        assert!(resize_action_result.len() > 0);
+        assert!(!resize_action_result.is_empty());
         for act in resize_action_result {
             assert!(act.old_size < act.new_size);
             assert!(act.new_size - act.old_size >= resize_settings.min_resize_step as u64);
@@ -1012,8 +999,7 @@ mod test {
             resize_trigger_percentage: 0.9,
         };
 
-        rm_rf::ensure_removed("test_resize1").unwrap();
-        let dir = TempDir::new("test_resize1").unwrap();
+        let dir = TempDir::new("test").unwrap();
         let initial_map_size = 1 << 12;
         let env = Environment::new()
             .set_map_size(initial_map_size)
@@ -1066,7 +1052,7 @@ mod test {
 
         // check resize steps
         let resize_action_result = resize_actions_for_check.lock().unwrap().clone();
-        assert!(resize_action_result.len() > 0);
+        assert!(!resize_action_result.is_empty());
         for act in resize_action_result {
             assert!(act.old_size < act.new_size);
             assert!(act.new_size - act.old_size >= resize_settings.min_resize_step as u64);
@@ -1095,8 +1081,7 @@ mod test {
             resize_trigger_percentage: 0.9,
         };
 
-        rm_rf::ensure_removed("test_resize2").unwrap();
-        let dir = TempDir::new("test_resize2").unwrap();
+        let dir = TempDir::new("test").unwrap();
         let initial_map_size = 1 << 20;
         let env = Environment::new()
             .set_map_size(initial_map_size)
@@ -1119,7 +1104,7 @@ mod test {
 
         // ensure resizing went as expected
         let resize_action_result = resize_actions_for_check.lock().unwrap().clone();
-        assert!(resize_action_result.len() > 0);
+        assert!(!resize_action_result.is_empty());
         for act in resize_action_result {
             assert!(act.old_size < act.new_size);
             assert!(act.new_size - act.old_size >= resize_settings.min_resize_step as u64);
@@ -1142,12 +1127,11 @@ mod test {
             resize_trigger_percentage: 0.9,
         };
 
-        rm_rf::ensure_removed("test_resize1").unwrap();
-        let dir = TempDir::new("test_resize1").unwrap();
+        let dir = TempDir::new("test").unwrap();
         let initial_map_size = 1 << 20;
         let env = Environment::new()
             .set_map_size(initial_map_size)
-            .set_resize_settings(resize_settings.clone())
+            .set_resize_settings(resize_settings)
             .open(dir.path())
             .unwrap();
 

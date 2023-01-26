@@ -2,12 +2,9 @@ use libc::c_uint;
 use std::ffi::CString;
 use std::ptr;
 
-use ffi;
+use lmdb_sys as ffi;
 
-use error::{
-    lmdb_result,
-    Result,
-};
+use crate::error::{lmdb_result, Result};
 
 /// A handle to an individual database in an environment.
 ///
@@ -23,7 +20,7 @@ impl Database {
     /// Prefer using `Environment::open_db`, `Environment::create_db`, `TransactionExt::open_db`,
     /// or `RwTransaction::create_db`.
     pub(crate) unsafe fn new(txn: *mut ffi::MDB_txn, name: Option<&str>, flags: c_uint) -> Result<Database> {
-        let c_name = name.map(|n| CString::new(n).unwrap());
+        let c_name = name.map(|n| CString::new(n).expect("lmdb: Database mapping to CString failed"));
         let name_ptr = if let Some(ref c_name) = c_name {
             c_name.as_ptr()
         } else {

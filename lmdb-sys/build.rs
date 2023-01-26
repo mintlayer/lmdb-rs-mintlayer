@@ -1,9 +1,3 @@
-extern crate cc;
-extern crate pkg_config;
-
-#[cfg(feature = "bindgen")]
-extern crate bindgen;
-
 #[cfg(feature = "bindgen")]
 #[path = "bindgen.rs"]
 mod generate;
@@ -49,7 +43,9 @@ fn main() {
     #[cfg(feature = "bindgen")]
     generate::generate();
 
-    let mut lmdb = PathBuf::from(&env::var("CARGO_MANIFEST_DIR").unwrap());
+    let mut lmdb = PathBuf::from(
+        &env::var("CARGO_MANIFEST_DIR").expect("lmdb: Path from str failed. Invariant broken."),
+    );
     lmdb.push("lmdb");
     lmdb.push("libraries");
     lmdb.push("liblmdb");
@@ -59,7 +55,7 @@ fn main() {
         warn!("Building with `-fsanitize=fuzzer`.");
     }
 
-    if !pkg_config::find_library("liblmdb").is_ok() {
+    if pkg_config::find_library("liblmdb").is_err() {
         let mut builder = cc::Build::new();
 
         builder

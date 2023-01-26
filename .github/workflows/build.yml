@@ -35,6 +35,34 @@ jobs:
       run: cargo test --all --release
     - name: Run tests debug
       run: cargo test --all
+    - name: Run bench
+      run: cargo bench --all
+
+  build_windows_nightly:
+    runs-on: windows-latest
+    # if: github.ref == 'refs/heads/master'
+    steps:
+    - uses: actions/checkout@v2
+    - name: Install rust nightly
+      uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: nightly
+        default: true
+    - name: Checkout repository and submodules
+      uses: actions/checkout@v2
+      with:
+        submodules: recursive
+    - name: Build release
+      run: cargo build --release
+    - name: Build debug
+      run: cargo build
+    - name: Run tests release
+      run: cargo test --all --release
+    - name: Run tests debug
+      run: cargo test --all
+    - name: Run bench
+      run: cargo bench --all
 
   build_ubuntu:
     runs-on: ubuntu-latest
@@ -59,6 +87,34 @@ jobs:
       run: cargo test --all --release
     - name: Run tests debug
       run: cargo test --all
+    - name: Run bench
+      run: cargo bench --all
+
+  build_ubuntu_nightly:
+    runs-on: ubuntu-latest
+    # if: github.ref == 'refs/heads/master'
+    steps:
+    - uses: actions/checkout@v2
+    - name: Install rust nightly
+      uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: nightly
+        default: true
+    - name: Checkout repository and submodules
+      uses: actions/checkout@v2
+      with:
+        submodules: recursive
+    - name: Build release
+      run: cargo build --release
+    - name: Build debug
+      run: cargo build
+    - name: Run tests release
+      run: cargo test --all --release
+    - name: Run tests debug
+      run: cargo test --all
+    - name: Run bench
+      run: cargo bench --all
 
   build_macos:
     runs-on: macos-latest
@@ -83,3 +139,31 @@ jobs:
       run: cargo test --all --release
     - name: Run tests debug
       run: cargo test --all
+    - name: Run bench
+      run: cargo bench --all
+
+  build_macos_nightly:
+    runs-on: macos-latest
+    # if: github.ref == 'refs/heads/master'
+    steps:
+    - uses: actions/checkout@v2
+    - name: Install rust nightly
+      uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: nightly
+        default: true
+    - name: Checkout repository and submodules
+      uses: actions/checkout@v2
+      with:
+        submodules: recursive
+    - name: Build release
+      run: cargo build --release
+    - name: Build debug
+      run: cargo build
+    - name: Run tests release
+      run: cargo test --all --release
+    - name: Run tests debug
+      run: cargo test --all
+    - name: Run bench
+      run: cargo bench --all

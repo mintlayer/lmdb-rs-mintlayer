@@ -1,28 +1,16 @@
-#![feature(test)]
+use criterion::{black_box, criterion_group, criterion_main, Bencher, Criterion};
 
-extern crate libc;
-extern crate lmdb;
-extern crate lmdb_sys as ffi;
-extern crate rand;
-extern crate test;
+use lmdb_sys as ffi;
 
 mod utils;
 
 use ffi::*;
 use libc::size_t;
-use lmdb::{
-    Transaction,
-    WriteFlags,
-};
-use rand::{SeedableRng, seq::SliceRandom};
+use lmdb::{Transaction, WriteFlags};
+use rand::{seq::SliceRandom, SeedableRng};
 use std::ptr;
-use test::{
-    black_box,
-    Bencher,
-};
 use utils::*;
 
-#[bench]
 fn bench_get_rand(b: &mut Bencher) {
     let n = 100u32;
     let (_dir, env) = setup_bench_db(n);
@@ -41,7 +29,6 @@ fn bench_get_rand(b: &mut Bencher) {
     });
 }
 
-#[bench]
 fn bench_get_rand_raw(b: &mut Bencher) {
     let n = 100u32;
     let (_dir, env) = setup_bench_db(n);
@@ -73,11 +60,10 @@ fn bench_get_rand_raw(b: &mut Bencher) {
 
             i += key_val.mv_size;
         }
-        black_box(i);
+        core::hint::black_box(i);
     });
 }
 
-#[bench]
 fn bench_put_rand(b: &mut Bencher) {
     let n = 100u32;
     let (_dir, env) = setup_bench_db(0);
@@ -95,7 +81,6 @@ fn bench_put_rand(b: &mut Bencher) {
     });
 }
 
-#[bench]
 fn bench_put_rand_raw(b: &mut Bencher) {
     let n = 100u32;
     let (_dir, _env) = setup_bench_db(0);
@@ -133,3 +118,13 @@ fn bench_put_rand_raw(b: &mut Bencher) {
         mdb_txn_abort(txn);
     });
 }
+
+fn criterion_benchmark(c: &mut Criterion) {
+    c.bench_function("bench_get_rand", bench_get_rand);
+    c.bench_function("bench_get_rand_raw", bench_get_rand_raw);
+    c.bench_function("bench_put_rand", bench_put_rand);
+    c.bench_function("bench_put_rand_raw", bench_put_rand_raw);
+}
+
+criterion_group!(benches, criterion_benchmark);
+criterion_main!(benches);
