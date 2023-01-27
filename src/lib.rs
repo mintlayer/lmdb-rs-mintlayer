@@ -11,6 +11,7 @@ pub use database::Database;
 pub use environment::{Environment, EnvironmentBuilder, Info, Stat};
 pub use error::{Error, Result};
 pub use flags::*;
+pub use resize::{DatabaseResizeInfo, DatabaseResizeSettings};
 pub use transaction::{InactiveTransaction, RoTransaction, RwTransaction, Transaction};
 
 macro_rules! lmdb_try {

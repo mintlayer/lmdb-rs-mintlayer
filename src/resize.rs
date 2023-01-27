@@ -1,8 +1,11 @@
 /// The information that will be sent in a callback when a resize happens
 #[derive(Debug, Clone)]
 pub struct DatabaseResizeInfo {
+    /// The size of the database before the resize
     pub old_size: u64,
+    /// The size of the database after the resize (current size)
     pub new_size: u64,
+    /// The estimated occupied size before the resize happened
     pub occupied_size_before_resize: u64,
 }
 
@@ -43,7 +46,7 @@ impl DatabaseResizeSettings {
         }
     }
 
-    pub fn validate(&self) {
+    pub(crate) fn validate(&self) {
         // The check below assumes that the type is unsigned
         assert_unsigned(self.min_resize_step);
         assert!(self.min_resize_step != 0, "lmdb: Min step must be positive");
