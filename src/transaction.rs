@@ -270,10 +270,19 @@ impl<'env> Drop for RwTransaction<'env> {
 impl<'env> RwTransaction<'env> {
     /// Creates a new read-write transaction in the given environment. Prefer
     /// using `Environment::begin_ro_txn`.
-    pub(crate) fn new(env: &'env Environment) -> Result<RwTransaction<'env>> {
+    pub(crate) fn new(env: &'env Environment, no_sync: bool, no_meta_sync: bool) -> Result<RwTransaction<'env>> {
         let mut txn = ptr::null_mut();
+
+        let mut flags = EnvironmentFlags::empty();
+        if no_sync {
+            flags |= EnvironmentFlags::NO_SYNC;
+        }
+        if no_meta_sync {
+            flags |= EnvironmentFlags::NO_META_SYNC;
+        }
+
         unsafe {
-            lmdb_result(ffi::mdb_txn_begin(env.env(), ptr::null_mut(), EnvironmentFlags::empty().bits(), &mut txn))?;
+            lmdb_result(ffi::mdb_txn_begin(env.env(), ptr::null_mut(), flags.bits(), &mut txn))?;
             Ok(RwTransaction {
                 txn,
                 env,
