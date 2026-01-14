@@ -17,7 +17,7 @@ macro_rules! E {
 
 macro_rules! str {
     ($expr:expr) => {
-        CString::new($expr).unwrap().as_ptr()
+        CString::new($expr).unwrap()
     };
 }
 
@@ -57,16 +57,23 @@ fn test_simple(env_path: &str) {
         mv_data: ptr::null_mut(),
     };
     let mut txn: *mut MDB_txn = ptr::null_mut();
-    let sval = str!("foo") as *mut c_void;
-    let dval = str!("bar") as *mut c_void;
+    let s = str!("foo");
+    let sval = s.as_ptr() as *mut c_void;
+    let d = str!("bar");
+    let dval = d.as_ptr() as *mut c_void;
 
     unsafe {
         E!(mdb_env_create(&mut env));
         E!(mdb_env_set_maxdbs(env, 2));
-        E!(mdb_env_open(env, str!(env_path), 0, 664));
+        E!(mdb_env_open(env, str!(env_path).as_ptr(), 0, 664));
 
         E!(mdb_txn_begin(env, ptr::null_mut(), 0, &mut txn));
-        E!(mdb_dbi_open(txn, str!("subdb"), MDB_CREATE, &mut dbi));
+        E!(mdb_dbi_open(
+            txn,
+            str!("subdb").as_ptr(),
+            MDB_CREATE,
+            &mut dbi
+        ));
         E!(mdb_txn_commit(txn));
 
         key.mv_size = 3;

@@ -8,6 +8,8 @@ jobs:
   clippy_check_ubuntu:
     name: Clippy
     runs-on: ubuntu-latest
+    permissions:
+      checks: write
     steps:
       - uses: actions/checkout@v1
       - run: rustup component add clippy

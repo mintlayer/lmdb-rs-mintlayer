@@ -98,7 +98,7 @@ pub trait Transaction: Sized + private::TransactionSealedProps {
     }
 
     /// Open a new read-only cursor on the given database.
-    fn open_ro_cursor(&self, db: Database) -> Result<RoCursor> {
+    fn open_ro_cursor(&self, db: Database) -> Result<RoCursor<'_>> {
         RoCursor::new(self, db)
     }
 
@@ -305,7 +305,7 @@ impl<'env> RwTransaction<'env> {
     }
 
     /// Opens a new read-write cursor on the given database and transaction.
-    pub fn open_rw_cursor(&mut self, db: Database) -> Result<RwCursor> {
+    pub fn open_rw_cursor(&mut self, db: Database) -> Result<RwCursor<'_>> {
         RwCursor::new(self, db)
     }
 
@@ -414,7 +414,7 @@ impl<'env> RwTransaction<'env> {
     }
 
     /// Begins a new nested transaction inside of this transaction.
-    pub fn begin_nested_txn(&mut self) -> Result<RwTransaction> {
+    pub fn begin_nested_txn(&mut self) -> Result<RwTransaction<'_>> {
         let mut nested: *mut ffi::MDB_txn = ptr::null_mut();
         unsafe {
             let env: *mut ffi::MDB_env = ffi::mdb_txn_env(self.txn());

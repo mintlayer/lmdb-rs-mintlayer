@@ -131,7 +131,7 @@ impl Environment {
     }
 
     /// Create a read-only transaction for use with the environment.
-    pub fn begin_ro_txn(&self) -> Result<RoTransaction> {
+    pub fn begin_ro_txn(&self) -> Result<RoTransaction<'_>> {
         RoTransaction::new(self)
     }
 
@@ -159,7 +159,7 @@ impl Environment {
 
     /// Create a read-write transaction for use with the environment. This method will block while
     /// there are any other read-write transactions open on the environment.
-    pub fn begin_rw_txn(&self, headroom: Option<usize>) -> Result<RwTransaction> {
+    pub fn begin_rw_txn(&self, headroom: Option<usize>) -> Result<RwTransaction<'_>> {
         let _lock = self.db_resize_lock.lock().expect("Database resize mutex lock failed");
         self.resize_db_if_necessary(headroom)?;
         RwTransaction::new(self)
@@ -521,7 +521,7 @@ impl Drop for Environment {
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-//// Environment Builder
+////// Environment Builder
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// Options for opening or creating an environment.

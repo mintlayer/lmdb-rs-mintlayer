@@ -84,4 +84,11 @@ fn main() {
 
         builder.compile("liblmdb.a")
     }
+
+    // Fix linker errors:
+    // "unresolved external symbol __imp_InitializeSecurityDescriptor referenced in function mdb_env_setup_locks",
+    // "unresolved external symbol __imp_SetSecurityDescriptorDacl referenced in function mdb_env_setup_locks".
+    if cfg!(windows) {
+        println!("cargo:rustc-link-lib=advapi32");
+    }
 }
