@@ -74,7 +74,7 @@ fn bench_put_rand(b: &mut Bencher) {
 
     b.iter(|| {
         let mut txn = env.begin_rw_txn(None).unwrap();
-        for &(ref key, ref data) in items.iter() {
+        for (key, data) in items.iter() {
             txn.put(db, key, data, WriteFlags::empty()).unwrap();
         }
         txn.abort();
@@ -106,7 +106,7 @@ fn bench_put_rand_raw(b: &mut Bencher) {
         mdb_txn_begin(env, ptr::null_mut(), 0, &mut txn);
 
         let mut i: ::libc::c_int = 0;
-        for &(ref key, ref data) in items.iter() {
+        for (key, data) in items.iter() {
             key_val.mv_size = key.len() as size_t;
             key_val.mv_data = key.as_bytes().as_ptr() as *mut _;
             data_val.mv_size = data.len() as size_t;
