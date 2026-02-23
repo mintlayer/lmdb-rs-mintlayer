@@ -131,7 +131,7 @@ impl Environment {
     }
 
     /// Create a read-only transaction for use with the environment.
-    pub fn begin_ro_txn(&self) -> Result<RoTransaction> {
+    pub fn begin_ro_txn(&self) -> Result<RoTransaction<'_>> {
         RoTransaction::new(self)
     }
 
@@ -159,18 +159,50 @@ impl Environment {
 
     /// Create a read-write transaction for use with the environment. This method will block while
     /// there are any other read-write transactions open on the environment.
-    pub fn begin_rw_txn(&self, headroom: Option<usize>) -> Result<RwTransaction> {
+    pub fn begin_rw_txn(&self, headroom: Option<usize>) -> Result<RwTransaction<'_>> {
+        self.begin_rw_txn_generic(headroom, false, false)
+    }
+
+    /// Create a read-write transaction for use with the environment. This method will block while
+    /// there are any other read-write transactions open on the environment.
+    ///
+    /// This is a more generic version of `begin_rw_txn`, which allows to optionally pass the MDB_NOSYNC
+    /// or MDB_NOMETASYNC flags to the underlying call to `mdb_txn_begin`. Passing the flags here has
+    /// the same effect as passing them when opening the environment, but only this particular transaction
+    /// will be affected. Same caveats apply:
+    /// 1) If MDB_NOSYNC is passed, a system crash may undo an already committed tx or corrupt the db,
+    ///    depending on the underlying filesystem (the corruption is possible e.g. on ext4 in "writeback"
+    ///    mode, on NTFS, probably on APFS too).
+    /// 2) If MDB_NOMETASYNC is passed, a system crash may undo an already committed tx.
+    ///
+    /// Note that the flags from the environment are just ORed with those passed to `mdb_txn_begin`,
+    /// so you can't "undo" a flag from the environment by passing false for one of the parameters here.
+    pub fn begin_rw_txn_generic(
+        &self,
+        headroom: Option<usize>,
+        no_sync: bool,
+        no_meta_sync: bool,
+    ) -> Result<RwTransaction<'_>> {
         let _lock = self.db_resize_lock.lock().expect("Database resize mutex lock failed");
         self.resize_db_if_necessary(headroom)?;
-        RwTransaction::new(self)
+        RwTransaction::new(self, no_sync, no_meta_sync)
     }
 
     /// Flush data buffers to disk.
     ///
     /// Data is always written to disk when `Transaction::commit` is called, but the operating
     /// system may keep it buffered. LMDB always flushes the OS buffers upon commit as well, unless
-    /// the environment was opened with `MDB_NOSYNC` or in part `MDB_NOMETASYNC`.
-    pub fn sync(&mut self, force: bool) -> Result<()> {
+    /// `MDB_NOSYNC` or `MDB_NOMETASYNC` were passed when opening the environment or creating the
+    /// transaction.
+    ///
+    /// Note:
+    /// * If the environment was opened with `MDB_NOSYNC`, `sync` will do nothing unless
+    ///   `force` is set to true.
+    /// * It will effectively "fix" the potential consistency issues introduced by previous
+    ///   `MDB_NOSYNC` commits (by ensuring that all transaction data has been written to disk).
+    /// * It is independent from the transactions machinery and can be called concurrently
+    ///   with transaction creation or committing or with itself.
+    pub fn sync(&self, force: bool) -> Result<()> {
         unsafe { lmdb_result(ffi::mdb_env_sync(self.env(), i32::from(force))) }
     }
 
@@ -521,7 +553,7 @@ impl Drop for Environment {
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-//// Environment Builder
+////// Environment Builder
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// Options for opening or creating an environment.
@@ -727,11 +759,11 @@ mod test {
     fn test_sync() {
         let dir = TempDir::new("test").unwrap();
         {
-            let mut env = Environment::new().open(dir.path()).unwrap();
+            let env = Environment::new().open(dir.path()).unwrap();
             assert!(env.sync(true).is_ok());
         }
         {
-            let mut env = Environment::new().set_flags(EnvironmentFlags::READ_ONLY).open(dir.path()).unwrap();
+            let env = Environment::new().set_flags(EnvironmentFlags::READ_ONLY).open(dir.path()).unwrap();
             assert!(env.sync(true).is_err());
         }
     }

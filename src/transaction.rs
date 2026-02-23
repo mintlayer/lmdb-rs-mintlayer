@@ -98,7 +98,7 @@ pub trait Transaction: Sized + private::TransactionSealedProps {
     }
 
     /// Open a new read-only cursor on the given database.
-    fn open_ro_cursor(&self, db: Database) -> Result<RoCursor> {
+    fn open_ro_cursor(&self, db: Database) -> Result<RoCursor<'_>> {
         RoCursor::new(self, db)
     }
 
@@ -270,10 +270,19 @@ impl<'env> Drop for RwTransaction<'env> {
 impl<'env> RwTransaction<'env> {
     /// Creates a new read-write transaction in the given environment. Prefer
     /// using `Environment::begin_ro_txn`.
-    pub(crate) fn new(env: &'env Environment) -> Result<RwTransaction<'env>> {
+    pub(crate) fn new(env: &'env Environment, no_sync: bool, no_meta_sync: bool) -> Result<RwTransaction<'env>> {
         let mut txn = ptr::null_mut();
+
+        let mut flags = EnvironmentFlags::empty();
+        if no_sync {
+            flags |= EnvironmentFlags::NO_SYNC;
+        }
+        if no_meta_sync {
+            flags |= EnvironmentFlags::NO_META_SYNC;
+        }
+
         unsafe {
-            lmdb_result(ffi::mdb_txn_begin(env.env(), ptr::null_mut(), EnvironmentFlags::empty().bits(), &mut txn))?;
+            lmdb_result(ffi::mdb_txn_begin(env.env(), ptr::null_mut(), flags.bits(), &mut txn))?;
             Ok(RwTransaction {
                 txn,
                 env,
@@ -305,7 +314,7 @@ impl<'env> RwTransaction<'env> {
     }
 
     /// Opens a new read-write cursor on the given database and transaction.
-    pub fn open_rw_cursor(&mut self, db: Database) -> Result<RwCursor> {
+    pub fn open_rw_cursor(&mut self, db: Database) -> Result<RwCursor<'_>> {
         RwCursor::new(self, db)
     }
 
@@ -414,7 +423,7 @@ impl<'env> RwTransaction<'env> {
     }
 
     /// Begins a new nested transaction inside of this transaction.
-    pub fn begin_nested_txn(&mut self) -> Result<RwTransaction> {
+    pub fn begin_nested_txn(&mut self) -> Result<RwTransaction<'_>> {
         let mut nested: *mut ffi::MDB_txn = ptr::null_mut();
         unsafe {
             let env: *mut ffi::MDB_env = ffi::mdb_txn_env(self.txn());

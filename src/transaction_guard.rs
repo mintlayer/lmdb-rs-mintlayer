@@ -64,7 +64,7 @@ struct SpinLock<'a> {
 }
 
 impl<'a> SpinLock<'a> {
-    fn new(lock: &'a AtomicBool) -> SpinLock {
+    fn new(lock: &'a AtomicBool) -> SpinLock<'a> {
         while lock.compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed).unwrap_or(true) {
             std::thread::yield_now();
         }

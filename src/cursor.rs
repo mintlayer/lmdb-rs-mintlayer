@@ -415,7 +415,7 @@ mod test {
 
         {
             let mut txn = env.begin_rw_txn(None).unwrap();
-            for &(ref key, ref data) in &items {
+            for (key, data) in &items {
                 txn.put(db, key, data, WriteFlags::empty()).unwrap();
             }
             txn.commit().unwrap();
@@ -530,7 +530,7 @@ mod test {
 
         {
             let mut txn = env.begin_rw_txn(None).unwrap();
-            for &(ref key, ref data) in &items {
+            for (key, data) in &items {
                 txn.put(db, key, data, WriteFlags::empty()).unwrap();
             }
             txn.commit().unwrap();
@@ -541,7 +541,7 @@ mod test {
         let cursor = txn.open_ro_cursor(db).unwrap();
         assert_eq!(
             items.clone().into_iter().skip(3).take(3).collect::<Vec<(&[u8], &[u8])>>(),
-            cursor.into_iter_dup_of(b"b").into_iter().collect::<Result<Vec<_>>>().unwrap()
+            cursor.into_iter_dup_of(b"b").collect::<Result<Vec<_>>>().unwrap()
         );
 
         let cursor = txn.open_ro_cursor(db).unwrap();
@@ -564,7 +564,7 @@ mod test {
 
         {
             let mut txn = env.begin_rw_txn(None).unwrap();
-            for &(ref key, ref data) in &items {
+            for (key, data) in &items {
                 txn.put(db, key, data, WriteFlags::empty()).unwrap();
             }
             txn.commit().unwrap();
